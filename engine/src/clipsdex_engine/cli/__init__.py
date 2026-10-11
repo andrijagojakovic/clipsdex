@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from clipsdex_engine import __version__, binaries
+from clipsdex_engine import __version__, binaries, config
 
 app = typer.Typer(
     name="clipsdex",
@@ -32,6 +32,7 @@ def main(
 @app.command()
 def doctor() -> None:
     """Check that the external tools ClipsDex needs are installed."""
+    typer.echo(f"Data folder: {config.data_dir()}\n")
     missing = 0
     for name in binaries.BINARIES:
         resolved = binaries.resolve(name)
