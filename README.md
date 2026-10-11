@@ -24,6 +24,27 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-dev.ps1 -Install # instal
 
 The Python engine lives in [`engine/`](engine/) and is managed with [uv](https://docs.astral.sh/uv/).
 
+### External tools (ffmpeg, ffprobe, fpcalc)
+
+For development, install them with winget (the setup script above does this too):
+
+```powershell
+winget install Gyan.FFmpeg          # ffmpeg + ffprobe
+winget install AcoustID.Chromaprint # fpcalc
+```
+
+Then check that the engine finds them (from `engine/`):
+
+```powershell
+uv run clipsdex doctor
+```
+
+The engine looks for each tool in this order:
+
+1. An override env var: `CLIPSDEX_FFMPEG`, `CLIPSDEX_FFPROBE`, `CLIPSDEX_FPCALC` (full path to the `.exe`).
+2. The bundled tools folder in `CLIPSDEX_BIN_DIR` (set by the desktop app in releases).
+3. Your `PATH`.
+
 ## License
 
 [MIT](LICENSE)
