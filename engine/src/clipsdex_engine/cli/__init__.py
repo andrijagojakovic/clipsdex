@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Annotated
+
 import typer
 
-from clipsdex_engine import __version__, binaries, config
+from clipsdex_engine import __version__, binaries, config, db
+from clipsdex_engine.sources import manual
 
 app = typer.Typer(
     name="clipsdex",
@@ -22,11 +26,33 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    version: bool = typer.Option(
-        False, "--version", callback=_version_callback, is_eager=True, help="Show version."
-    ),
+    version: Annotated[
+        bool,
+        typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
+    ] = False,
 ) -> None:
     """ClipsDex: local, private analysis of your saved short videos."""
+
+
+@app.command("import")
+def import_(
+    paths: Annotated[list[Path], typer.Argument(help="Video files and/or folders to import.")],
+    recursive: Annotated[bool, typer.Option(help="Also look inside subfolders.")] = True,
+) -> None:
+    """Import video files from your computer. Files already in the library are skipped."""
+    engine = db.open_database()
+    report = manual.import_paths(engine, paths, recursive=recursive)
+
+    for path, reason in report.failed:
+        typer.secho(f"[FAILED]  {path}: {reason}", fg=typer.colors.RED)
+    typer.echo(
+        f"Imported {len(report.added)} new video(s), "
+        f"skipped {len(report.duplicates)} already in the library."
+    )
+    if not report.added and not report.duplicates and not report.failed:
+        typer.echo(f"No video files found. Supported: {', '.join(sorted(manual.VIDEO_EXTENSIONS))}")
+    if report.failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()
