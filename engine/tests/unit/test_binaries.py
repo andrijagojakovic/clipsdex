@@ -29,7 +29,7 @@ def make_fake_binary(folder: Path, name: str) -> Path:
 
 def test_env_override_wins(isolated_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Cyrillic and spaces on purpose: Windows usernames and folders can contain them.
-    fake = make_fake_binary(isolated_env / "Мој фолдер" / "tools", "ffmpeg")  # noqa: RUF001
+    fake = make_fake_binary(isolated_env / "Мој фолдер" / "tools", "ffmpeg")
     bundled = make_fake_binary(isolated_env / "bundled", "ffmpeg")
     monkeypatch.setenv("CLIPSDEX_FFMPEG", str(fake))
     monkeypatch.setenv(binaries.BIN_DIR_ENV, str(bundled.parent))

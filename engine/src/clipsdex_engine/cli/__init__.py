@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
+from rich.table import Table
+from sqlmodel import Session
 
-from clipsdex_engine import __version__, binaries, config, db
+from clipsdex_engine import __version__, binaries, config, db, library
+from clipsdex_engine.db.models import SourceType
 from clipsdex_engine.sources import manual
 
 app = typer.Typer(
@@ -53,6 +59,103 @@ def import_(
         typer.echo(f"No video files found. Supported: {', '.join(sorted(manual.VIDEO_EXTENSIONS))}")
     if report.failed:
         raise typer.Exit(code=1)
+
+
+def _fmt_time(value: datetime | None) -> str:
+    return value.astimezone().strftime("%Y-%m-%d %H:%M") if value else "-"
+
+
+def _or_dash(value: object) -> str:
+    return "-" if value is None else str(value)
+
+
+@app.command("list")
+def list_(
+    source: Annotated[SourceType | None, typer.Option(help="Only videos from this source.")] = None,
+    author: Annotated[str | None, typer.Option(help="Only videos by this author.")] = None,
+    limit: Annotated[int | None, typer.Option(min=1, help="Show at most this many.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+) -> None:
+    """List the videos in your library."""
+    engine = db.open_database()
+    with Session(engine) as session:
+        videos = library.list_videos(
+            session, library.VideoFilter(source_type=source, author=author, limit=limit)
+        )
+        if as_json:
+            typer.echo(json.dumps([v.model_dump(mode="json") for v in videos], indent=2))
+            return
+        if not videos:
+            typer.echo("No videos yet. Add some with: clipsdex import <folder>")
+            return
+
+        table = Table(box=None, header_style="bold")
+        for column in ("ID", "Video", "Author", "Collection", "Imported"):
+            table.add_column(column)
+        for v in videos:
+            table.add_row(
+                str(v.id),
+                library.display_name(v),
+                v.author or "-",
+                v.collection_name or "-",
+                _fmt_time(v.imported_at),
+            )
+        Console().print(table)
+        typer.echo(f"\n{len(videos)} video(s).")
+
+
+@app.command()
+def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex list`.")]) -> None:
+    """Show everything ClipsDex knows about one video."""
+    engine = db.open_database()
+    with Session(engine) as session:
+        details = library.video_details(session, video_id)
+        if details is None:
+            typer.secho(f"No video with ID {video_id}. See: clipsdex list", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
+        v = details.video
+        rows: list[tuple[str, str]] = [
+            ("ID", str(v.id)),
+            ("Video", library.display_name(v)),
+            ("Source", details.source.display_name),
+            ("File", v.file_path or ("deleted after analysis" if v.file_deleted else "-")),
+            ("Link", v.original_url or "-"),
+            ("Author", v.author or "-"),
+            ("Collection", v.collection_name or "-"),
+            ("Caption", v.caption or "-"),
+            ("Saved", _fmt_time(v.saved_at)),
+            ("Imported", _fmt_time(v.imported_at)),
+        ]
+        if details.category is not None:
+            rows.append(("Category", f"{details.category.name} ({details.category_assigned_by})"))
+        else:
+            rows.append(("Category", "not categorized yet"))
+        for label, value in rows:
+            typer.echo(f"{label + ':':<12}{value}")
+
+        p = details.profile
+        typer.echo("\nProfile:")
+        if p is None:
+            typer.echo("  not profiled yet")
+        else:
+            typer.echo(f"  duration {_or_dash(p.duration_s)} s, cuts {_or_dash(p.cut_count)}")
+            typer.echo(
+                f"  speech {_or_dash(p.speech_ratio)}, music {_or_dash(p.music_ratio)}, "
+                f"silence {_or_dash(p.silence_ratio)}"
+            )
+
+        typer.echo("\nResults:")
+        if not details.results:
+            typer.echo("  none yet")
+        for r in details.results:
+            conf = f"{r.confidence:.0%}" if r.confidence is not None else "-"
+            typer.echo(f"  {r.analyzer}: {json.dumps(r.value)} (confidence {conf})")
+            typer.echo(f"    found by {r.method}" + (f": {r.evidence}" if r.evidence else ""))
+
+        if details.artifacts:
+            names = ", ".join(sorted({a.type for a in details.artifacts}))
+            typer.echo(f"\nCached artifacts: {names}")
 
 
 @app.command()
