@@ -13,6 +13,7 @@ from rich.table import Table
 from sqlmodel import Session
 
 from clipsdex_engine import __version__, binaries, config, db, library
+from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import SourceType
 from clipsdex_engine.sources import manual
 
@@ -139,7 +140,10 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
         if p is None:
             typer.echo("  not profiled yet")
         else:
-            typer.echo(f"  duration {_or_dash(p.duration_s)} s, cuts {_or_dash(p.cut_count)}")
+            size = f"{p.width}x{p.height}" if p.width and p.height else "-"
+            audio = {True: "yes", False: "no", None: "-"}[p.has_audio]
+            typer.echo(f"  duration {_or_dash(p.duration_s)} s, size {size}, audio {audio}")
+            typer.echo(f"  cuts {_or_dash(p.cut_count)}")
             typer.echo(
                 f"  speech {_or_dash(p.speech_ratio)}, music {_or_dash(p.music_ratio)}, "
                 f"silence {_or_dash(p.silence_ratio)}"
@@ -156,6 +160,32 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
         if details.artifacts:
             names = ", ".join(sorted({a.type for a in details.artifacts}))
             typer.echo(f"\nCached artifacts: {names}")
+
+
+@app.command()
+def profile(
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    redo: Annotated[bool, typer.Option(help="Rebuild profiles that already exist.")] = False,
+) -> None:
+    """Build the quick profile (duration, size, audio) of videos that do not have one yet."""
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    try:
+        report = quick_profile.run_quick_profile(engine, paths, video_ids=video, redo=redo)
+    except binaries.BinaryNotFoundError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+    for video_id, reason in report.failed:
+        typer.secho(f"[FAILED]  video {video_id}: {reason}", fg=typer.colors.RED)
+    if not report.profiled and not report.failed:
+        typer.echo("Nothing to profile. Use --redo to rebuild existing profiles.")
+        return
+    typer.echo(f"Profiled {len(report.profiled)} video(s), {len(report.failed)} failed.")
+    if report.failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

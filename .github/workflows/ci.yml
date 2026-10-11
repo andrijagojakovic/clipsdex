@@ -27,6 +27,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: engine/uv.lock
 
+      - name: Install ffmpeg (media tests generate synthetic clips with it)
+        run: |
+          choco install ffmpeg -y --no-progress
+          ffmpeg -version
+
       - name: Install Python and dependencies
         run: uv sync --locked
 

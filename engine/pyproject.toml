@@ -46,6 +46,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "PTH", "RUF"]
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["tests"]  # test helper modules (e.g. tests/synthetic.py) imported by name
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."
