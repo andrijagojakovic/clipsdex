@@ -1,0 +1,40 @@
+# Test media and real user data (never commit)
+eval/videos/
+*.mp4
+*.mov
+*.webm
+*.m4a
+exports/
+instagram-export*/
+
+# Secrets
+.env
+.env.*
+*.key
+cookies.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+*.egg-info/
+dist/
+build/
+
+# Node / Tauri
+node_modules/
+app/dist/
+app/src-tauri/target/
+
+# Local app data during development
+.clipsdex-data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

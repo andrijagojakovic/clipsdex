@@ -1,0 +1,14 @@
+# Expected answers for the evaluation set (see CLAUDE.md §9).
+# Put the video files in eval/videos/ (gitignored, never committed).
+# Fill one entry per video. Example:
+#
+# - file: edit_01.mp4
+#   category: edit
+#   song: { title: "...", artist: "..." }
+# - file: business_01.mp4
+#   category: business
+#   brief_must_mention: ["pricing", "follow-up"]
+# - file: movie_01.mp4
+#   category: movie
+#   movie: { title: "...", year: 1995 }
+[]
