@@ -8,11 +8,23 @@ authors = [{ name = "Andrija Gojaković" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20.0",
+    "httpx>=0.28.1",
+    "numpy>=2.5.4",
     "platformdirs>=4.13.0",
     "pydantic>=2.14.1",
     "sqlmodel>=0.0.48",
+    "torch>=2.14.1",
     "typer>=0.27.3",
 ]
+
+[[tool.uv.index]]
+# CPU-only PyTorch on every platform (CLAUDE.md §4); GPU builds are a later, optional extra.
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [project.scripts]
 clipsdex = "clipsdex_engine.cli:app"

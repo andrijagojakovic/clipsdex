@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlmodel import Session
 
-from clipsdex_engine import __version__, binaries, config, db, library
+from clipsdex_engine import __version__, binaries, config, db, library, net
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import SourceType
 from clipsdex_engine.sources import manual
@@ -68,6 +68,10 @@ def _fmt_time(value: datetime | None) -> str:
 
 def _or_dash(value: object) -> str:
     return "-" if value is None else str(value)
+
+
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0%}"
 
 
 @app.command("list")
@@ -145,9 +149,11 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
             typer.echo(f"  duration {_or_dash(p.duration_s)} s, size {size}, audio {audio}")
             typer.echo(f"  cuts {_or_dash(p.cut_count)}")
             typer.echo(
-                f"  speech {_or_dash(p.speech_ratio)}, music {_or_dash(p.music_ratio)}, "
-                f"silence {_or_dash(p.silence_ratio)}"
+                f"  speech {_pct(p.speech_ratio)}, music {_pct(p.music_ratio)}, "
+                f"silence {_pct(p.silence_ratio)}"
             )
+            if p.has_vocals is not None:
+                typer.echo(f"  vocals in music: {'yes' if p.has_vocals else 'no'} (best guess)")
 
         typer.echo("\nResults:")
         if not details.results:
@@ -172,9 +178,23 @@ def profile(
     """Build the quick profile (duration, size, audio) of videos that do not have one yet."""
     paths = config.data_paths()
     engine = db.open_database(paths)
+    last_shown = -1
+
+    def show_download(done: int, total: int | None) -> None:
+        nonlocal last_shown
+        if last_shown < 0:
+            typer.echo("Downloading the audio model (one time, about 360 MB)...")
+            last_shown = 0
+        if total and (percent := done * 100 // total) >= last_shown + 10:
+            last_shown = percent
+            typer.echo(f"  {percent}%")
+
+    tagger = quick_profile.default_tagger(paths, progress=show_download)
     try:
-        report = quick_profile.run_quick_profile(engine, paths, video_ids=video, redo=redo)
-    except binaries.BinaryNotFoundError as e:
+        report = quick_profile.run_quick_profile(
+            engine, paths, video_ids=video, redo=redo, tagger=tagger
+        )
+    except (binaries.BinaryNotFoundError, net.DownloadError) as e:
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(code=1) from e
 

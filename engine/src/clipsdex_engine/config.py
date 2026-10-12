@@ -43,8 +43,13 @@ class DataPaths:
     def logs(self) -> Path:
         return self.root / "logs"
 
+    @property
+    def models(self) -> Path:
+        """Model weights the engine downloads itself (not Ollama models)."""
+        return self.root / "models"
+
     def ensure(self) -> DataPaths:
-        for folder in (self.root, self.artifacts, self.videos, self.logs):
+        for folder in (self.root, self.artifacts, self.videos, self.logs, self.models):
             folder.mkdir(parents=True, exist_ok=True)
         return self
 
