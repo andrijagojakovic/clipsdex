@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from clipsdex_engine import binaries
 
@@ -117,6 +121,62 @@ def probe(path: Path, timeout: float = 60.0) -> MediaInfo:
     if not info.has_video and not info.has_audio:
         raise MediaError("The file has no video or audio.")
     return info
+
+
+def iter_frames(
+    path: Path, width: int, height: int, fps: float, timeout: float = 600.0
+) -> Iterator[np.ndarray]:
+    """Decode ``path`` with ffmpeg into small BGR frames (height, width, 3) at ``fps``.
+
+    ffmpeg (not OpenCV) opens the file, so non-ASCII Windows paths work.
+    """
+    ffmpeg = binaries.require("ffmpeg")
+    frame_bytes = width * height * 3
+    args = [
+        str(ffmpeg),
+        "-nostdin",
+        "-v",
+        "error",
+        "-i",
+        str(path),
+        "-an",
+        "-vf",
+        f"fps={fps},scale={width}:{height}",
+        "-pix_fmt",
+        "bgr24",
+        "-f",
+        "rawvideo",
+        "-",
+    ]
+    deadline = time.monotonic() + timeout
+    try:
+        proc = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_NO_WINDOW
+        )
+    except OSError as e:
+        raise MediaError(f"Could not start ffmpeg: {e}") from e
+    assert proc.stdout is not None
+    finished = False
+    try:
+        while len(chunk := proc.stdout.read(frame_bytes)) == frame_bytes:
+            yield np.frombuffer(chunk, dtype=np.uint8).reshape(height, width, 3)
+            if time.monotonic() > deadline:
+                raise MediaError(f"Reading video frames took longer than {timeout:.0f} s.")
+        finished = True
+    finally:
+        if not finished:  # caller stopped early or an error: don't leave ffmpeg running
+            proc.kill()
+        _, stderr = proc.communicate()
+    if proc.returncode != 0:
+        message = stderr.decode("utf-8", errors="replace")
+        raise MediaError(f"Could not read video frames ({_last_line(message)}).")
+
+
+def analysis_size(width: int, height: int, target_width: int = 256) -> tuple[int, int]:
+    """A small frame size with the video's aspect ratio (even numbers, as ffmpeg likes)."""
+    target_width = min(target_width, width - width % 2)
+    target_height = max(2, round(target_width * height / width / 2) * 2)
+    return target_width, target_height
 
 
 def extract_audio(src: Path, dst: Path, sample_rate: int = 16_000, timeout: float = 600.0) -> None:

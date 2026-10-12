@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.5.4",
     "platformdirs>=4.13.0",
     "pydantic>=2.14.1",
+    "scenedetect>=0.7.1",
     "sqlmodel>=0.0.48",
     "torch>=2.14.1",
     "typer>=0.27.3",

@@ -1,7 +1,7 @@
 """Level 1 quick profile (CLAUDE.md §5.1): cheap, automatic facts about every video.
 
 Implemented so far: ffprobe metadata and the audio artifact (2.1), speech/music/silence
-ratios and the vocals flag (2.2). Later steps add cut count (2.3), quick OCR (2.4) and the
+ratios and the vocals flag (2.2), cut count (2.3). Later steps add quick OCR (2.4) and the
 category guess (2.6).
 
 Heavy models are loaded at most once per run, and only when needed (D16).
@@ -22,11 +22,11 @@ from clipsdex_engine.config import DataPaths
 from clipsdex_engine.db import session_scope
 from clipsdex_engine.db.models import Profile, Video, utcnow
 from clipsdex_engine.models import panns
-from clipsdex_engine.profile import audio_classes
+from clipsdex_engine.profile import audio_classes, cuts
 from clipsdex_engine.profile.audio_classes import AudioTagger
 
 # Bump when a step adds or changes profile fields: older profiles are then rebuilt.
-PROFILE_VERSION = 2
+PROFILE_VERSION = 3
 
 
 @dataclass
@@ -76,6 +76,11 @@ def profile_video(session: Session, paths: DataPaths, video: Video, tagger: Lazy
     profile.width = info.width
     profile.height = info.height
     profile.has_audio = info.has_audio
+    profile.cut_count = (
+        cuts.count_cuts(path, info.width, info.height)
+        if info.has_video and info.width and info.height
+        else None
+    )
 
     if info.has_audio:
         artifact = audio.ensure_audio(session, paths, video, path)

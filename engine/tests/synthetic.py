@@ -21,6 +21,9 @@ class SyntheticMedia:
     with_audio: Path  # 2 s test pattern, 320x240, 440 Hz tone
     silent: Path  # 1 s blue frame, no audio stream
     not_video: Path  # random bytes with an .mp4 extension
+    # 3 x 1.5 s: red, test pattern, dark gradient -> exactly 2 hard cuts. Shots must also
+    # differ in brightness: ContentDetector averages hue/sat/lum change (threshold 27).
+    three_shots: Path
 
 
 def _ffmpeg(*args: str) -> None:
@@ -38,7 +41,15 @@ def make_synthetic_media(tmp_path_factory: pytest.TempPathFactory) -> SyntheticM
         with_audio=folder / "tone.mp4",
         silent=folder / "blue.mp4",
         not_video=folder / "broken.mp4",
+        three_shots=folder / "three shots.mp4",
     )
+    _ffmpeg(
+        "-f", "lavfi", "-i", "color=c=red:size=320x568:rate=30:duration=1.5",
+        "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=30:duration=1.5",
+        "-f", "lavfi", "-i", "gradients=size=320x568:rate=30:duration=1.5:c0=black:c1=navy",
+        "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0",
+        "-pix_fmt", "yuv420p", str(media.three_shots),
+    )  # fmt: skip
     _ffmpeg(
         "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=25",
         "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
