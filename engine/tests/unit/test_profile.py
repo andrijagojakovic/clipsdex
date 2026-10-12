@@ -221,3 +221,31 @@ def test_cli_profile_without_ollama_keeps_profiles(
     assert "Profiled 1 video(s), 0 failed." in result.output
     assert "Category guesses skipped" in result.output
     assert runner.invoke(app, ["profile", "--no-guess"]).output.startswith("Nothing to do")
+
+
+def test_cli_queue_then_worker_profiles_and_guesses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_media: SyntheticMedia
+) -> None:
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path / "data"))
+    monkeypatch.setattr(quick_profile, "default_models", lambda *_a, **_k: fake_models())
+    reply = '{"category": "edit", "confidence": 0.8, "reason": "music"}'
+    fake = FakeLLM(default_reply=reply)
+    monkeypatch.setattr(llm, "default_provider", lambda *_a, **_k: fake)
+    runner = CliRunner()
+    runner.invoke(app, ["import", str(synthetic_media.with_audio), str(synthetic_media.silent)])
+
+    queued = runner.invoke(app, ["profile", "--queue"])
+    assert "Queued 4 job(s)" in queued.output  # 2 profiles + 2 guesses
+    assert runner.invoke(app, ["profile", "--queue"]).output.startswith("Queued 4 job(s)")
+
+    result = runner.invoke(app, ["worker"])
+
+    assert result.exit_code == 0, result.output
+    assert "Done 4, failed 0" in result.output
+    lines = [line.strip() for line in result.output.splitlines()]
+    # D16: all profiles with the profile models, then one Ollama load for all guesses.
+    assert lines.index("load profile-models") < lines.index("unload profile-models")
+    assert lines.index("unload profile-models") < lines.index("load ollama:gemma3:4b")
+    assert fake.events == ["load gemma3:4b", "unload gemma3:4b"]
+    assert "Category:   edit (auto, 80% sure)" in runner.invoke(app, ["show", "2"]).output
+    assert "Queued 0 job(s)" in runner.invoke(app, ["profile", "--queue"]).output

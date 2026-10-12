@@ -187,12 +187,25 @@ class Job(SQLModel, table=True):
     )
     params: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
     status: JobStatus = Field(default=JobStatus.QUEUED, index=True, sa_type=enum_type(JobStatus))
+    # What must be loaded to run it, e.g. "ollama:gemma3:4b"; the scheduler groups by it (D16).
+    resource: str = Field(default="cpu", index=True)
     progress: float = 0.0
     error: str | None = None
     attempts: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class JobDependency(SQLModel, table=True):
+    """``job_id`` may only start once ``depends_on_id`` is done."""
+
+    __tablename__ = "job_dependencies"  # pyright: ignore[reportAssignmentType]
+
+    job_id: int = Field(foreign_key="jobs.id", primary_key=True, ondelete="CASCADE")
+    depends_on_id: int = Field(
+        foreign_key="jobs.id", primary_key=True, index=True, ondelete="CASCADE"
+    )
 
 
 class SettingRow(SQLModel, table=True):

@@ -163,6 +163,29 @@ def save_guess(
     )
 
 
+def guess_one(engine: Engine, provider: LLMProvider, model: str, video_id: int) -> str:
+    """Guess and save the category of one video; returns the category name.
+
+    Raises ``llm.LLMError`` subclasses on failure (nothing is saved then).
+    """
+    with session_scope(engine) as session:
+        categories.ensure_default_categories(session)
+        cats = categories.all_categories(session)
+        by_name = {c.name: c for c in cats}
+        video = session.get_one(Video, video_id)
+        profile = session.get(Profile, video_id)
+        guess = llm.ask_structured(
+            provider,
+            model,
+            build_messages(video, profile, cats),
+            guess_schema(list(by_name)),
+            keep_alive="10m",
+        )
+        chosen = by_name[guess.model_dump()["category"]]
+        save_guess(session, video_id, chosen, guess, model)
+        return chosen.name
+
+
 def run_category_guess(
     engine: Engine,
     provider: LLMProvider,
@@ -189,20 +212,7 @@ def run_category_guess(
     try:
         for video_id in ids:
             try:
-                with session_scope(engine) as session:
-                    cats = categories.all_categories(session)
-                    by_name = {c.name: c for c in cats}
-                    video = session.get_one(Video, video_id)
-                    profile = session.get(Profile, video_id)
-                    guess = llm.ask_structured(
-                        provider,
-                        model,
-                        build_messages(video, profile, cats),
-                        guess_schema(list(by_name)),
-                        keep_alive="10m",
-                    )
-                    chosen = by_name[guess.model_dump()["category"]]
-                    save_guess(session, video_id, chosen, guess, model)
+                guess_one(engine, provider, model, video_id)
             except llm.LLMError as e:
                 report.failed.append((video_id, str(e)))
                 if isinstance(e, llm.ProviderUnavailableError):

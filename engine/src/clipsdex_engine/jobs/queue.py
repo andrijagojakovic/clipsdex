@@ -14,11 +14,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, func, update
+from sqlalchemy import Engine, and_, func, update
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, col, select
 
 from clipsdex_engine.db import session_scope
-from clipsdex_engine.db.models import Job, JobKind, JobStatus, utcnow
+from clipsdex_engine.db.models import Job, JobDependency, JobKind, JobStatus, utcnow
 
 MAX_ATTEMPTS = 3
 ACTIVE = (JobStatus.QUEUED, JobStatus.RUNNING)
@@ -30,6 +31,8 @@ class JobSpec:
     name: str  # artifact type ("transcript") or analyzer name ("song_id")
     video_id: int | None = None
     params: dict[str, Any] | None = None
+    resource: str = "cpu"  # what must be loaded to run it (see Job.resource)
+    depends_on: tuple[int, ...] = ()  # job IDs that must be done first
 
 
 def enqueue(session: Session, spec: JobSpec) -> Job:
@@ -46,8 +49,18 @@ def enqueue(session: Session, spec: JobSpec) -> Job:
     for job in existing:
         if job.params == params:
             return job
-    job = Job(kind=spec.kind, name=spec.name, video_id=spec.video_id, params=params)
+    job = Job(
+        kind=spec.kind,
+        name=spec.name,
+        video_id=spec.video_id,
+        params=params,
+        resource=spec.resource,
+    )
     session.add(job)
+    session.flush()
+    assert job.id is not None
+    for dep in dict.fromkeys(spec.depends_on):
+        session.add(JobDependency(job_id=job.id, depends_on_id=dep))
     session.flush()
     return job
 
@@ -58,11 +71,72 @@ def enqueue_many(engine: Engine, specs: Iterable[JobSpec]) -> list[int]:
         return [j.id for j in jobs if j.id is not None]
 
 
-def claim_next(engine: Engine, names: Iterable[str] | None = None) -> Job | None:
-    """Atomically move the oldest queued job (optionally only of ``names``) to running."""
-    candidates = select(Job.id).where(Job.status == JobStatus.QUEUED)
+def _ready() -> Any:
+    """SQL condition: queued, and every job it depends on is done."""
+    dep_job = aliased(Job)
+    unfinished_dep = (
+        select(JobDependency.job_id)
+        .join(dep_job, col(dep_job.id) == col(JobDependency.depends_on_id))
+        .where(
+            col(JobDependency.job_id) == col(Job.id),
+            col(dep_job.status) != JobStatus.DONE,
+        )
+    )
+    return and_(col(Job.status) == JobStatus.QUEUED, ~unfinished_dep.exists())
+
+
+def ready_resources(engine: Engine) -> list[tuple[str, int, int]]:
+    """(resource, ready job count, oldest ready job id) for every resource with ready work."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Job.resource, func.count(), func.min(Job.id))
+            .where(_ready())
+            .group_by(col(Job.resource))
+            .order_by(func.min(Job.id))
+        ).all()
+    return [(resource, n, oldest) for resource, n, oldest in rows if oldest is not None]
+
+
+def fail_blocked(engine: Engine) -> int:
+    """Fail queued jobs whose dependency failed or was cancelled (repeats down the chain)."""
+    total = 0
+    while True:
+        with session_scope(engine) as session:
+            dep_job = aliased(Job)
+            rows = session.exec(
+                select(Job, dep_job)
+                .join(JobDependency, col(JobDependency.job_id) == col(Job.id))
+                .join(dep_job, col(dep_job.id) == col(JobDependency.depends_on_id))
+                .where(
+                    col(Job.status) == JobStatus.QUEUED,
+                    col(dep_job.status).in_([JobStatus.FAILED, JobStatus.CANCELLED]),
+                )
+            ).all()
+            if not rows:
+                return total
+            for job, dep in rows:
+                if job.status != JobStatus.QUEUED:
+                    continue  # already handled via another failed dependency
+                job.status = JobStatus.FAILED
+                job.finished_at = utcnow()
+                job.error = f"Skipped: the job it needs (#{dep.id} {dep.name}) {dep.status.value}."
+                total += 1
+
+
+def requeue(engine: Engine, job_id: int) -> bool:
+    """Put a running job back in the queue (e.g. the worker was stopped mid-job)."""
+    return _finish(engine, job_id, status=JobStatus.QUEUED, started_at=None, progress=0.0)
+
+
+def claim_next(
+    engine: Engine, names: Iterable[str] | None = None, resource: str | None = None
+) -> Job | None:
+    """Atomically move the oldest ready job (optionally filtered) to running."""
+    candidates = select(Job.id).where(_ready())
     if names is not None:
         candidates = candidates.where(col(Job.name).in_(list(names)))
+    if resource is not None:
+        candidates = candidates.where(col(Job.resource) == resource)
     candidates = candidates.order_by(col(Job.id)).limit(1).scalar_subquery()
     with session_scope(engine) as session:
         claimed = session.exec(

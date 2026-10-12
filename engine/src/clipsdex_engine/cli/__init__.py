@@ -15,7 +15,9 @@ from sqlmodel import Session
 from clipsdex_engine import __version__, binaries, config, db, library, llm, net
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import JobStatus, SourceType
-from clipsdex_engine.jobs import queue
+from clipsdex_engine.jobs import builtin, queue
+from clipsdex_engine.jobs.handlers import WorkerEnv
+from clipsdex_engine.jobs.worker import Worker, WorkerBusyError
 from clipsdex_engine.sources import manual
 
 app = typer.Typer(
@@ -185,10 +187,19 @@ def profile(
     guess: Annotated[
         bool, typer.Option(help="Also guess a category with the local text model.")
     ] = True,
+    in_background: Annotated[
+        bool,
+        typer.Option("--queue", help="Only add jobs to the queue; `clipsdex worker` runs them."),
+    ] = False,
 ) -> None:
     """Build the quick profile of new videos (duration, audio, cuts, text) and guess categories."""
     paths = config.data_paths()
     engine = db.open_database(paths)
+    if in_background:
+        env = WorkerEnv(engine, paths)
+        ids = builtin.enqueue_profiling(env, video_ids=video, redo=redo, guess=guess)
+        typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+        return
     last_shown = -1
 
     def show_download(done: int, total: int | None) -> None:
@@ -230,6 +241,35 @@ def profile(
     if nothing_done and not (g and g.skipped_reason):
         typer.echo("Nothing to do. Use --redo to rebuild existing profiles.")
     if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def worker(
+    watch: Annotated[
+        bool, typer.Option(help="Keep running and wait for new jobs (stop with Ctrl+C).")
+    ] = False,
+) -> None:
+    """Run queued jobs, grouped so only one heavy model is loaded at a time."""
+    paths = config.data_paths()
+    env = WorkerEnv(db.open_database(paths), paths)
+    w = Worker(env, builtin.HANDLERS, on_event=lambda e: typer.echo(f"  {e}"))
+    try:
+        report = w.run(until_idle=not watch)
+    except WorkerBusyError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    except KeyboardInterrupt:
+        typer.echo("\nStopped. Unfinished jobs stay queued and continue next time.")
+        raise typer.Exit(code=130) from None
+
+    for job_id, reason in report.failed:
+        typer.secho(f"[FAILED]  job {job_id}: {reason}", fg=typer.colors.RED)
+    typer.echo(
+        f"Done {len(report.done)}, failed {len(report.failed)}, "
+        f"cancelled {len(report.cancelled)}, will retry {len(report.retried)}."
+    )
+    if report.failed:
         raise typer.Exit(code=1)
 
 
