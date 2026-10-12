@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlmodel import Session
 
-from clipsdex_engine import __version__, binaries, config, db, library, net
+from clipsdex_engine import __version__, binaries, config, db, library, llm, net
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import SourceType
 from clipsdex_engine.sources import manual
@@ -214,7 +214,7 @@ def profile(
 
 @app.command()
 def doctor() -> None:
-    """Check that the external tools ClipsDex needs are installed."""
+    """Check that the tools and local AI models ClipsDex needs are installed."""
     typer.echo(f"Data folder: {config.data_dir()}\n")
     missing = 0
     for name in binaries.BINARIES:
@@ -228,7 +228,40 @@ def doctor() -> None:
         ver = binaries.version(resolved.path)
         typer.echo(f"          {ver or 'found, but it did not report a version'}")
 
+    missing += _doctor_models()
+
     if missing:
-        typer.secho(f"\n{missing} tool(s) missing.", fg=typer.colors.YELLOW)
+        typer.secho(f"\n{missing} item(s) missing.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
     typer.secho("\nEverything needed is installed.", fg=typer.colors.GREEN)
+
+
+def _doctor_models() -> int:
+    """Check the local model runtime and the models the current preset needs."""
+    paths = config.data_paths()
+    settings = config.Settings()
+    if paths.db.is_file():  # don't create a library just to read settings
+        with Session(db.open_database(paths)) as session:
+            settings = db.load_settings(session)
+
+    typer.echo("")
+    provider = llm.default_provider()
+    health = provider.health()
+    if not health.ok:
+        typer.secho(f"[MISSING] Ollama: {health.message}", fg=typer.colors.YELLOW)
+        typer.echo("          Install it from https://ollama.com, or start the Ollama app.")
+        return 1
+    typer.secho(f"[OK]      {health.message}", fg=typer.colors.GREEN)
+
+    missing = 0
+    models = settings.models()
+    for model in dict.fromkeys([models.text, models.vision, models.embedding]):
+        if provider.has_model(model):
+            typer.secho(f"[OK]      model {model}", fg=typer.colors.GREEN)
+        else:
+            missing += 1
+            typer.secho(
+                f"[MISSING] model {model} ({settings.preset} preset)", fg=typer.colors.YELLOW
+            )
+            typer.echo(f"          Download it with: ollama pull {model}")
+    return missing

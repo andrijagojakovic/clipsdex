@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from clipsdex_engine import binaries
+from clipsdex_engine import binaries, config, llm
 from clipsdex_engine.cli import app
+from mocks.fake_llm import FakeLLM
 
 
 @pytest.fixture
@@ -16,6 +17,8 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path / "data"))
+    monkeypatch.setattr(llm, "default_provider", lambda *_a, **_k: FakeLLM())
     return tmp_path
 
 
@@ -105,3 +108,38 @@ def test_doctor_reports_found(isolated_env: Path, monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 0
     for name in binaries.BINARIES:
         assert f"[OK]      {name} (bundled)" in result.output
+
+
+def all_binaries_bundled(isolated_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in binaries.BINARIES:
+        make_fake_binary(isolated_env / "bundled", name)
+    monkeypatch.setenv(binaries.BIN_DIR_ENV, str(isolated_env / "bundled"))
+
+
+def test_doctor_reports_ollama_not_running(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    all_binaries_bundled(isolated_env, monkeypatch)
+    monkeypatch.setattr(llm, "default_provider", lambda *_a, **_k: FakeLLM(running=False))
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "[MISSING] Ollama" in result.output
+    assert "https://ollama.com" in result.output
+
+
+def test_doctor_reports_missing_preset_model(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    all_binaries_bundled(isolated_env, monkeypatch)
+    fake = FakeLLM(models=["gemma3:4b"])  # embedding model missing
+    monkeypatch.setattr(llm, "default_provider", lambda *_a, **_k: fake)
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "[OK]      model gemma3:4b" in result.output
+    assert "[MISSING] model nomic-embed-text (balanced preset)" in result.output
+    assert "ollama pull nomic-embed-text" in result.output
+    assert not (isolated_env / "data" / "clipsdex.db").exists()  # doctor creates no library
