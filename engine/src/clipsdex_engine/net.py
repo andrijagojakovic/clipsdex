@@ -9,7 +9,9 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 import httpx
 
@@ -34,21 +36,41 @@ def client() -> httpx.Client:
     return httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT, follow_redirects=True)
 
 
+@dataclass(frozen=True)
+class Checksum:
+    """Expected hash of a download. ``git-sha1`` is a git blob id (Hugging Face small files)."""
+
+    kind: Literal["md5", "sha256", "git-sha1"]
+    value: str
+    size: int | None = None  # required for git-sha1 (part of the hashed header)
+
+    def new_digest(self) -> Any:
+        if self.kind == "git-sha1":
+            if self.size is None:
+                raise ValueError("A git-sha1 checksum needs the file size.")
+            digest = hashlib.sha1(usedforsecurity=False)
+            digest.update(f"blob {self.size}\0".encode())
+            return digest
+        return hashlib.new(self.kind, usedforsecurity=False)
+
+
 def download(
     url: str,
     dst: Path,
     *,
     md5: str | None = None,
+    checksum: Checksum | None = None,
     progress: Progress | None = None,
     retries: int = RETRIES,
 ) -> Path:
-    """Download ``url`` to ``dst`` atomically, verifying ``md5`` if given."""
+    """Download ``url`` to ``dst`` atomically, verifying ``checksum`` (or ``md5``) if given."""
+    if md5 is not None:
+        checksum = Checksum("md5", md5)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".part")
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            digest = hashlib.md5(usedforsecurity=False)
             with client() as http, http.stream("GET", url) as response:
                 response.raise_for_status()
                 total = (
@@ -56,15 +78,17 @@ def download(
                     if "Content-Length" in response.headers
                     else None
                 )
+                digest = checksum.new_digest() if checksum is not None else None
                 done = 0
                 with tmp.open("wb") as f:
                     for chunk in response.iter_bytes(_CHUNK):
                         f.write(chunk)
-                        digest.update(chunk)
+                        if digest is not None:
+                            digest.update(chunk)
                         done += len(chunk)
                         if progress is not None:
                             progress(done, total)
-            if md5 is not None and digest.hexdigest() != md5:
+            if checksum is not None and digest is not None and digest.hexdigest() != checksum.value:
                 raise DownloadError("The downloaded file is damaged (checksum mismatch).")
             tmp.replace(dst)
             return dst

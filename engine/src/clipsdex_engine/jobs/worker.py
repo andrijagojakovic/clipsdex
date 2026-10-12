@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from clipsdex_engine import llm, media, net
-from clipsdex_engine.db.models import JobStatus
+from clipsdex_engine.db.models import Job, JobStatus
 from clipsdex_engine.jobs import queue
 from clipsdex_engine.jobs.handlers import (
     Handler,
@@ -115,9 +115,7 @@ class Worker:
                 queue.mark_failed(engine, job.id, f"No handler for job type {job.name!r}.")
                 self.report.failed.append((job.id, "no handler"))
                 continue
-            self._switch_to(key, handler)
-            assert self.current is not None
-            self._run_one(handler, JobContext(self.env, job, self.current))
+            self._run_one(handler, key, job)
 
     def _switch_to(self, key: str | None, handler: Handler | None = None) -> None:
         if self.current is not None and self.current.key == key:
@@ -135,11 +133,15 @@ class Worker:
         resource.load()
         self.current = resource
 
-    def _run_one(self, handler: Handler, ctx: JobContext) -> None:
-        job_id, engine = ctx.job_id, self.env.engine
-        self._event(f"run #{job_id} {ctx.job.name}")
+    def _run_one(self, handler: Handler, key: str, job: Job) -> None:
+        assert job.id is not None
+        job_id, engine = job.id, self.env.engine
         try:
-            handler.run(ctx)
+            # Loading can fail too (e.g. a model download): handled like a job error.
+            self._switch_to(key, handler)
+            assert self.current is not None
+            self._event(f"run #{job_id} {job.name}")
+            handler.run(JobContext(self.env, job, self.current))
         except KeyboardInterrupt:
             queue.requeue(engine, job_id)  # resume it next time
             raise
@@ -155,7 +157,7 @@ class Worker:
             if queue.mark_failed(engine, job_id, str(e)) is not None:
                 self.report.failed.append((job_id, str(e)))
         except Exception as e:
-            log.exception("Job #%d (%s) crashed", job_id, ctx.job.name)
+            log.exception("Job #%d (%s) crashed", job_id, job.name)
             message = f"Unexpected error: {e}. See the log file for details."
             if queue.mark_failed(engine, job_id, message) is not None:
                 self.report.failed.append((job_id, message))

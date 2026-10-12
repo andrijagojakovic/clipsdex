@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 from sqlalchemy import Engine
 
-from clipsdex_engine import llm
+from clipsdex_engine import llm, net
 from clipsdex_engine.config import DataPaths
 from clipsdex_engine.db.models import Job, JobKind
 from clipsdex_engine.jobs import queue
@@ -38,6 +38,8 @@ class WorkerEnv:
     paths: DataPaths
     # None = llm.default_provider, looked up when first needed (not at import time).
     provider_factory: Callable[[], llm.LLMProvider] | None = None
+    # Called while a resource downloads its model on first use (bytes done, total).
+    download_progress: net.Progress | None = None
     _provider: llm.LLMProvider | None = field(default=None, init=False, repr=False)
 
     @property

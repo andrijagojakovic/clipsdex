@@ -73,6 +73,23 @@ def _or_dash(value: object) -> str:
     return "-" if value is None else str(value)
 
 
+def _download_printer() -> net.Progress:
+    """Prints "Downloading a model…" once, then every 10%."""
+    last_shown = -1
+
+    def show(done: int, total: int | None) -> None:
+        nonlocal last_shown
+        if last_shown < 0:
+            size = f" ({total / 1e6:,.0f} MB)" if total else ""
+            typer.echo(f"Downloading a model, one time only{size}...")
+            last_shown = 0
+        if total and (percent := done * 100 // total) >= last_shown + 10:
+            last_shown = percent
+            typer.echo(f"  {percent}%")
+
+    return show
+
+
 def _pct(value: float | None) -> str:
     return "-" if value is None else f"{value:.0%}"
 
@@ -173,6 +190,13 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
             typer.echo(f"  {r.analyzer}: {json.dumps(r.value)} (confidence {conf})")
             typer.echo(f"    found by {r.method}" + (f": {r.evidence}" if r.evidence else ""))
 
+        for a in details.artifacts:
+            if a.type == "transcript" and isinstance(a.data, dict):
+                language = a.data.get("language") or "no speech"
+                text = a.data.get("text") or ""
+                typer.echo(f"\nTranscript ({a.params.get('model')}, language: {language}):")
+                typer.echo(f"  {text[:300] + ('…' if len(text) > 300 else '') or '(empty)'}")
+
         if details.artifacts:
             names = ", ".join(sorted({a.type for a in details.artifacts}))
             typer.echo(f"\nCached artifacts: {names}")
@@ -200,18 +224,7 @@ def profile(
         ids = builtin.enqueue_profiling(env, video_ids=video, redo=redo, guess=guess)
         typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
         return
-    last_shown = -1
-
-    def show_download(done: int, total: int | None) -> None:
-        nonlocal last_shown
-        if last_shown < 0:
-            typer.echo("Downloading the audio model (one time, about 360 MB)...")
-            last_shown = 0
-        if total and (percent := done * 100 // total) >= last_shown + 10:
-            last_shown = percent
-            typer.echo(f"  {percent}%")
-
-    models = quick_profile.default_models(paths, progress=show_download)
+    models = quick_profile.default_models(paths, progress=_download_printer())
     try:
         report = quick_profile.run_quick_profile(
             engine, paths, video_ids=video, redo=redo, models=models, guess=guess
@@ -245,6 +258,22 @@ def profile(
 
 
 @app.command()
+def transcribe(
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    redo: Annotated[
+        bool, typer.Option(help="Transcribe again even if a transcript exists.")
+    ] = False,
+) -> None:
+    """Queue speech-to-text for videos without a transcript (`clipsdex worker` runs it)."""
+    paths = config.data_paths()
+    env = WorkerEnv(db.open_database(paths), paths)
+    ids = builtin.enqueue_transcripts(env, video_ids=video, redo=redo)
+    typer.echo(f"Queued {len(ids)} transcript job(s). Run them with: clipsdex worker")
+
+
+@app.command()
 def worker(
     watch: Annotated[
         bool, typer.Option(help="Keep running and wait for new jobs (stop with Ctrl+C).")
@@ -252,7 +281,7 @@ def worker(
 ) -> None:
     """Run queued jobs, grouped so only one heavy model is loaded at a time."""
     paths = config.data_paths()
-    env = WorkerEnv(db.open_database(paths), paths)
+    env = WorkerEnv(db.open_database(paths), paths, download_progress=_download_printer())
     w = Worker(env, builtin.HANDLERS, on_event=lambda e: typer.echo(f"  {e}"))
     try:
         report = w.run(until_idle=not watch)
