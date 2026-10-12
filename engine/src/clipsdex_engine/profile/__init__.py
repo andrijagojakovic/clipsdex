@@ -1,8 +1,8 @@
 """Level 1 quick profile (CLAUDE.md §5.1): cheap, automatic facts about every video.
 
 Implemented so far: ffprobe metadata and the audio artifact (2.1), speech/music/silence
-ratios and the vocals flag (2.2), cut count (2.3). Later steps add quick OCR (2.4) and the
-category guess (2.6).
+ratios and the vocals flag (2.2), cut count (2.3), quick OCR (2.4). Step 2.6 adds the
+first category guess.
 
 Heavy models are loaded at most once per run, and only when needed (D16).
 """
@@ -21,12 +21,12 @@ from clipsdex_engine.artifacts import audio
 from clipsdex_engine.config import DataPaths
 from clipsdex_engine.db import session_scope
 from clipsdex_engine.db.models import Profile, Video, utcnow
-from clipsdex_engine.models import panns
-from clipsdex_engine.profile import audio_classes, cuts
+from clipsdex_engine.profile import audio_classes, cuts, quick_ocr
 from clipsdex_engine.profile.audio_classes import AudioTagger
+from clipsdex_engine.profile.quick_ocr import TextReader
 
 # Bump when a step adds or changes profile fields: older profiles are then rebuilt.
-PROFILE_VERSION = 3
+PROFILE_VERSION = 4
 
 
 @dataclass
@@ -35,24 +35,32 @@ class ProfileReport:
     failed: list[tuple[int, str]] = field(default_factory=list)
 
 
-class LazyTagger:
-    """Creates the audio tagger on first use, so runs without audio never load the model."""
+class Lazy[T]:
+    """Creates a model on first use, so a run that never needs it never loads it."""
 
-    def __init__(self, factory: Callable[[], AudioTagger]) -> None:
+    def __init__(self, factory: Callable[[], T]) -> None:
         self._factory = factory
-        self._tagger: AudioTagger | None = None
+        self._value: T | None = None
 
-    def get(self) -> AudioTagger:
-        if self._tagger is None:
-            self._tagger = self._factory()
-        return self._tagger
+    def get(self) -> T:
+        if self._value is None:
+            self._value = self._factory()
+        return self._value
 
 
-def default_tagger(paths: DataPaths, progress: net.Progress | None = None) -> LazyTagger:
-    def load() -> AudioTagger:
+@dataclass(frozen=True)
+class ProfileModels:
+    tagger: Lazy[AudioTagger]
+    ocr: Lazy[TextReader]
+
+
+def default_models(paths: DataPaths, progress: net.Progress | None = None) -> ProfileModels:
+    def load_tagger() -> AudioTagger:
+        from clipsdex_engine.models import panns  # torch takes seconds to import: only when needed
+
         return panns.PannsTagger(panns.ensure_checkpoint(paths.models, progress))
 
-    return LazyTagger(load)
+    return ProfileModels(tagger=Lazy(load_tagger), ocr=Lazy(quick_ocr.RapidOcrReader))
 
 
 def local_file(video: Video) -> Path | None:
@@ -61,7 +69,9 @@ def local_file(video: Video) -> Path | None:
     return Path(video.file_path)
 
 
-def profile_video(session: Session, paths: DataPaths, video: Video, tagger: LazyTagger) -> Profile:
+def profile_video(
+    session: Session, paths: DataPaths, video: Video, models: ProfileModels
+) -> Profile:
     """Build (or rebuild) the quick profile of one video. Raises MediaError on bad files."""
     assert video.id is not None
     path = local_file(video)
@@ -81,11 +91,16 @@ def profile_video(session: Session, paths: DataPaths, video: Video, tagger: Lazy
         if info.has_video and info.width and info.height
         else None
     )
+    if info.has_video:
+        text = quick_ocr.quick_ocr(path, info, models.ocr.get())
+        profile.has_text, profile.ocr_text = text.has_text, text.text
+    else:
+        profile.has_text, profile.ocr_text = False, None
 
     if info.has_audio:
         artifact = audio.ensure_audio(session, paths, video, path)
         samples = audio_classes.read_wav(audio.audio_path(paths, artifact))
-        classes = audio_classes.classify(samples, tagger.get())
+        classes = audio_classes.classify(samples, models.tagger.get())
         profile.speech_ratio = classes.speech_ratio
         profile.music_ratio = classes.music_ratio
         profile.silence_ratio = classes.silence_ratio
@@ -123,10 +138,10 @@ def run_quick_profile(
     paths: DataPaths,
     video_ids: Iterable[int] | None = None,
     redo: bool = False,
-    tagger: LazyTagger | None = None,
+    models: ProfileModels | None = None,
 ) -> ProfileReport:
     """Profile videos one by one. Raises ``net.DownloadError`` if a model can't be fetched."""
-    tagger = tagger or default_tagger(paths)
+    models = models or default_models(paths)
     report = ProfileReport()
     with Session(engine) as session:
         ids = [v.id for v in videos_to_profile(session, video_ids, redo) if v.id is not None]
@@ -135,7 +150,7 @@ def run_quick_profile(
         # One transaction per video: a broken file never undoes the others.
         try:
             with session_scope(engine) as session:
-                profile_video(session, paths, session.get_one(Video, video_id), tagger)
+                profile_video(session, paths, session.get_one(Video, video_id), models)
         except media.MediaError as e:
             report.failed.append((video_id, str(e)))
         else:

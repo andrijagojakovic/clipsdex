@@ -172,6 +172,50 @@ def iter_frames(
         raise MediaError(f"Could not read video frames ({_last_line(message)}).")
 
 
+def frame_at(
+    path: Path, seconds: float, width: int, height: int, timeout: float = 60.0
+) -> np.ndarray | None:
+    """One BGR frame (height, width, 3) at ``seconds``, or None if there is none there."""
+    ffmpeg = binaries.require("ffmpeg")
+    try:
+        result = subprocess.run(
+            [
+                str(ffmpeg),
+                "-nostdin",
+                "-v",
+                "error",
+                "-ss",
+                f"{max(0.0, seconds):.3f}",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-an",
+                "-vf",
+                f"scale={width}:{height}",
+                "-pix_fmt",
+                "bgr24",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            creationflags=_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise MediaError(f"Reading a frame took longer than {timeout:.0f} s.") from e
+    except OSError as e:
+        raise MediaError(f"Could not start ffmpeg: {e}") from e
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace")
+        raise MediaError(f"Could not read a video frame ({_last_line(message)}).")
+    if len(result.stdout) < width * height * 3:
+        return None
+    return np.frombuffer(result.stdout[: width * height * 3], np.uint8).reshape(height, width, 3)
+
+
 def analysis_size(width: int, height: int, target_width: int = 256) -> tuple[int, int]:
     """A small frame size with the video's aspect ratio (even numbers, as ffmpeg likes)."""
     target_width = min(target_width, width - width % 2)

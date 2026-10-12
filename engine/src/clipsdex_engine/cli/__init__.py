@@ -154,6 +154,10 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
             )
             if p.has_vocals is not None:
                 typer.echo(f"  vocals in music: {'yes' if p.has_vocals else 'no'} (best guess)")
+            if p.has_text is not None:
+                typer.echo(f"  text on screen: {'yes' if p.has_text else 'no'}")
+            for line in (p.ocr_text or "").splitlines():
+                typer.echo(f"    | {line}")
 
         typer.echo("\nResults:")
         if not details.results:
@@ -189,10 +193,10 @@ def profile(
             last_shown = percent
             typer.echo(f"  {percent}%")
 
-    tagger = quick_profile.default_tagger(paths, progress=show_download)
+    models = quick_profile.default_models(paths, progress=show_download)
     try:
         report = quick_profile.run_quick_profile(
-            engine, paths, video_ids=video, redo=redo, tagger=tagger
+            engine, paths, video_ids=video, redo=redo, models=models
         )
     except (binaries.BinaryNotFoundError, net.DownloadError) as e:
         typer.secho(str(e), fg=typer.colors.RED)

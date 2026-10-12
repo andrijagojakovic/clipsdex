@@ -22,23 +22,18 @@ from numpy._core.multiarray import _reconstruct as _np_reconstruct  # pyright: i
 from torch import nn
 
 from clipsdex_engine import net
+from clipsdex_engine.models import audioset
 
-SAMPLE_RATE = 16_000
+SAMPLE_RATE = audioset.SAMPLE_RATE
 WINDOW = 512
 HOP = 160
 MEL_BINS = 64
-NUM_CLASSES = 527
+NUM_CLASSES = audioset.NUM_CLASSES
 
 CHECKPOINT_NAME = "Cnn14_16k_mAP=0.438.pth"
 CHECKPOINT_URL = "https://zenodo.org/records/3987831/files/Cnn14_16k_mAP%3D0.438.pth?download=1"
 CHECKPOINT_MD5 = "362fc5ff18f1d6ad2f6d464b45893f2c"
 CHECKPOINT_BYTES = 358_668_570
-
-# AudioSet class indices (verified against class_labels_indices.csv, 2026-10-12).
-SPEECH = 0
-MUSIC = 137
-VOCAL_CLASSES = (27, 32, 33, 34, 35, 36, 254)  # Singing, Male/Female/Child/Synthetic singing,
-# Rapping, Vocal music
 
 
 # Globals the (legacy-format) checkpoint references besides tensors; found by scanning its

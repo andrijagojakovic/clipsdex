@@ -4,11 +4,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from clipsdex_engine.models import panns
+from clipsdex_engine.models import audioset
 from clipsdex_engine.profile import audio_classes as ac
 from synthetic import FakeTagger
 
-SR = panns.SAMPLE_RATE
+SR = audioset.SAMPLE_RATE
 SEG = int(ac.SEGMENT_S * SR)
 
 

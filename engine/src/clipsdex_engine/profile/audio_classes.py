@@ -15,7 +15,7 @@ from typing import Protocol
 
 import numpy as np
 
-from clipsdex_engine.models import panns
+from clipsdex_engine.models import audioset
 
 SEGMENT_S = 2.0
 MIN_LAST_SEGMENT_S = 1.0  # a shorter tail is ignored
@@ -50,7 +50,7 @@ def read_wav(path: Path) -> np.ndarray:
     return np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
 
 
-def split_segments(samples: np.ndarray, sample_rate: int = panns.SAMPLE_RATE) -> np.ndarray:
+def split_segments(samples: np.ndarray, sample_rate: int = audioset.SAMPLE_RATE) -> np.ndarray:
     seg = int(SEGMENT_S * sample_rate)
     count, tail = divmod(len(samples), seg)
     parts = [samples[: count * seg].reshape(count, seg)] if count else []
@@ -72,9 +72,9 @@ def summarize(probs: np.ndarray, silent: np.ndarray) -> AudioClasses:
     if total == 0:
         return AudioClasses(0.0, 0.0, 0.0, None, 0)
 
-    speech = probs[:, panns.SPEECH] >= SPEECH_THRESHOLD
-    music = probs[:, panns.MUSIC] >= MUSIC_THRESHOLD
-    vocals = probs[:, list(panns.VOCAL_CLASSES)].max(axis=1) >= VOCALS_THRESHOLD
+    speech = probs[:, audioset.SPEECH] >= SPEECH_THRESHOLD
+    music = probs[:, audioset.MUSIC] >= MUSIC_THRESHOLD
+    vocals = probs[:, list(audioset.VOCAL_CLASSES)].max(axis=1) >= VOCALS_THRESHOLD
 
     has_vocals: bool | None = None
     if music.sum() > 0:

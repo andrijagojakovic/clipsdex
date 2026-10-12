@@ -4,11 +4,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
 from clipsdex_engine import binaries
-from clipsdex_engine.models import panns
+from clipsdex_engine.models import audioset
 
 needs_ffmpeg = pytest.mark.skipif(
     binaries.resolve("ffmpeg").path is None or binaries.resolve("ffprobe").path is None,
@@ -67,8 +68,12 @@ class FakeTagger:
     """Stands in for PANNs in unit tests: every non-silent segment gets the same probabilities."""
 
     def __init__(self, **class_probs: float) -> None:
-        self.probs = np.zeros(panns.NUM_CLASSES, dtype=np.float32)
-        names = {"speech": panns.SPEECH, "music": panns.MUSIC, "singing": panns.VOCAL_CLASSES[0]}
+        self.probs = np.zeros(audioset.NUM_CLASSES, dtype=np.float32)
+        names = {
+            "speech": audioset.SPEECH,
+            "music": audioset.MUSIC,
+            "singing": audioset.VOCAL_CLASSES[0],
+        }
         for name, p in class_probs.items():
             self.probs[names[name]] = p
         self.calls = 0
@@ -76,6 +81,47 @@ class FakeTagger:
     def predict(self, segments: np.ndarray) -> np.ndarray:
         self.calls += 1
         return np.tile(self.probs, (len(segments), 1))
+
+
+class FakeReader:
+    """Stands in for RapidOCR in unit tests: returns the same lines for every frame."""
+
+    def __init__(self, lines: list[tuple[str, float]] | None = None) -> None:
+        self.lines = lines or []
+        self.frames: list[np.ndarray] = []
+
+    def read(self, image: np.ndarray) -> list[tuple[str, float]]:
+        self.frames.append(image)
+        return list(self.lines)
+
+
+def make_text_video(folder: Path, lines: list[str], seconds: float = 4.0) -> Path:
+    """A still frame with big white text on dark grey, as a short H.264 video."""
+    folder.mkdir(parents=True, exist_ok=True)
+    image = np.full((1280, 720, 3), 40, np.uint8)
+    for i, line in enumerate(lines):
+        cv2.putText(
+            image, line, (40, 400 + 120 * i), cv2.FONT_HERSHEY_SIMPLEX, 2.2, (255, 255, 255), 5
+        )
+    png = folder / "frame.png"
+    png.write_bytes(
+        cv2.imencode(".png", image)[1].tobytes()
+    )  # cv2.imwrite fails on non-ASCII paths
+    video = folder / "text video.mp4"
+    _ffmpeg(
+        "-loop",
+        "1",
+        "-i",
+        str(png),
+        "-t",
+        str(seconds),
+        "-r",
+        "25",
+        "-pix_fmt",
+        "yuv420p",
+        str(video),
+    )
+    return video
 
 
 @dataclass(frozen=True)
