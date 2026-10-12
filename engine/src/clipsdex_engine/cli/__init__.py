@@ -14,7 +14,8 @@ from sqlmodel import Session
 
 from clipsdex_engine import __version__, binaries, config, db, library, llm, net
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.db.models import SourceType
+from clipsdex_engine.db.models import JobStatus, SourceType
+from clipsdex_engine.jobs import queue
 from clipsdex_engine.sources import manual
 
 app = typer.Typer(
@@ -230,6 +231,58 @@ def profile(
         typer.echo("Nothing to do. Use --redo to rebuild existing profiles.")
     if failed:
         raise typer.Exit(code=1)
+
+
+jobs_app = typer.Typer(help="See and cancel background jobs.", no_args_is_help=False)
+app.add_typer(jobs_app, name="jobs")
+
+
+@jobs_app.callback(invoke_without_command=True)
+def jobs_overview(
+    ctx: typer.Context,
+    status: Annotated[JobStatus | None, typer.Option(help="Only jobs with this status.")] = None,
+    limit: Annotated[int, typer.Option(min=1, help="How many recent jobs to show.")] = 20,
+) -> None:
+    """Show how many jobs are queued, running, done, failed or cancelled."""
+    if ctx.invoked_subcommand is not None:
+        return
+    engine = db.open_database()
+    counts = queue.counts(engine)
+    typer.echo("  ".join(f"{s.value}: {n}" for s, n in counts.items()))
+    jobs = queue.recent(engine, limit=limit, status=status)
+    if not jobs:
+        typer.echo("No jobs.")
+        return
+    table = Table(box=None, header_style="bold")
+    for column in ("ID", "Job", "Video", "Status", "Progress", "Tries", "Error"):
+        table.add_column(column)
+    for j in jobs:
+        table.add_row(
+            str(j.id),
+            f"{j.kind.value}:{j.name}",
+            _or_dash(j.video_id),
+            j.status.value,
+            f"{j.progress:.0%}",
+            str(j.attempts),
+            (j.error or "")[:60],
+        )
+    Console().print(table)
+
+
+@jobs_app.command("cancel")
+def jobs_cancel(
+    job_ids: Annotated[list[int] | None, typer.Argument(help="Job IDs to cancel.")] = None,
+    all_jobs: Annotated[
+        bool, typer.Option("--all", help="Cancel every queued or running job.")
+    ] = False,
+) -> None:
+    """Cancel jobs. Running jobs stop at their next checkpoint."""
+    if not job_ids and not all_jobs:
+        typer.secho("Give job IDs, or --all to cancel everything.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    engine = db.open_database()
+    n = queue.cancel(engine, None if all_jobs else job_ids)
+    typer.echo(f"Cancelled {n} job(s).")
 
 
 @app.command()
