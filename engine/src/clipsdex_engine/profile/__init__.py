@@ -1,8 +1,8 @@
 """Level 1 quick profile (CLAUDE.md §5.1): cheap, automatic facts about every video.
 
 Implemented so far: ffprobe metadata and the audio artifact (2.1), speech/music/silence
-ratios and the vocals flag (2.2), cut count (2.3), quick OCR (2.4). Step 2.6 adds the
-first category guess.
+ratios and the vocals flag (2.2), cut count (2.3), quick OCR (2.4). A second pass makes
+the first category guess with a small text model (2.6, ``category_guess.py``).
 
 Heavy models are loaded at most once per run, and only when needed (D16).
 """
@@ -16,12 +16,12 @@ from pathlib import Path
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
-from clipsdex_engine import media, net
+from clipsdex_engine import db, llm, media, net
 from clipsdex_engine.artifacts import audio
 from clipsdex_engine.config import DataPaths
 from clipsdex_engine.db import session_scope
 from clipsdex_engine.db.models import Profile, Video, utcnow
-from clipsdex_engine.profile import audio_classes, cuts, quick_ocr
+from clipsdex_engine.profile import audio_classes, category_guess, cuts, quick_ocr
 from clipsdex_engine.profile.audio_classes import AudioTagger
 from clipsdex_engine.profile.quick_ocr import TextReader
 
@@ -33,6 +33,7 @@ PROFILE_VERSION = 4
 class ProfileReport:
     profiled: list[int] = field(default_factory=list)
     failed: list[tuple[int, str]] = field(default_factory=list)
+    guesses: category_guess.GuessReport | None = None  # None when guessing was not requested
 
 
 class Lazy[T]:
@@ -139,8 +140,14 @@ def run_quick_profile(
     video_ids: Iterable[int] | None = None,
     redo: bool = False,
     models: ProfileModels | None = None,
+    provider: llm.LLMProvider | None = None,
+    guess: bool = True,
 ) -> ProfileReport:
-    """Profile videos one by one. Raises ``net.DownloadError`` if a model can't be fetched."""
+    """Profile videos one by one, then guess categories in one batch (one LLM load, D16).
+
+    Raises ``net.DownloadError`` if a needed model can't be fetched. A missing or stopped
+    Ollama does not fail the run: profiles are kept and ``report.guesses`` says why.
+    """
     models = models or default_models(paths)
     report = ProfileReport()
     with Session(engine) as session:
@@ -155,4 +162,11 @@ def run_quick_profile(
             report.failed.append((video_id, str(e)))
         else:
             report.profiled.append(video_id)
+
+    if guess:
+        with Session(engine) as session:
+            text_model = db.load_settings(session).models().text
+        report.guesses = category_guess.run_category_guess(
+            engine, provider or llm.default_provider(), text_model, video_ids, redo
+        )
     return report

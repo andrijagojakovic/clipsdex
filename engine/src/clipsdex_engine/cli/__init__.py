@@ -133,7 +133,10 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
             ("Imported", _fmt_time(v.imported_at)),
         ]
         if details.category is not None:
-            rows.append(("Category", f"{details.category.name} ({details.category_assigned_by})"))
+            how = str(details.category_assigned_by)
+            if details.category_confidence is not None:
+                how += f", {details.category_confidence:.0%} sure"
+            rows.append(("Category", f"{details.category.name} ({how})"))
         else:
             rows.append(("Category", "not categorized yet"))
         for label, value in rows:
@@ -178,8 +181,11 @@ def profile(
         list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
     ] = None,
     redo: Annotated[bool, typer.Option(help="Rebuild profiles that already exist.")] = False,
+    guess: Annotated[
+        bool, typer.Option(help="Also guess a category with the local text model.")
+    ] = True,
 ) -> None:
-    """Build the quick profile (duration, size, audio) of videos that do not have one yet."""
+    """Build the quick profile of new videos (duration, audio, cuts, text) and guess categories."""
     paths = config.data_paths()
     engine = db.open_database(paths)
     last_shown = -1
@@ -196,19 +202,33 @@ def profile(
     models = quick_profile.default_models(paths, progress=show_download)
     try:
         report = quick_profile.run_quick_profile(
-            engine, paths, video_ids=video, redo=redo, models=models
+            engine, paths, video_ids=video, redo=redo, models=models, guess=guess
         )
     except (binaries.BinaryNotFoundError, net.DownloadError) as e:
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(code=1) from e
 
+    failed = False
     for video_id, reason in report.failed:
         typer.secho(f"[FAILED]  video {video_id}: {reason}", fg=typer.colors.RED)
-    if not report.profiled and not report.failed:
-        typer.echo("Nothing to profile. Use --redo to rebuild existing profiles.")
-        return
-    typer.echo(f"Profiled {len(report.profiled)} video(s), {len(report.failed)} failed.")
-    if report.failed:
+        failed = True
+    if report.profiled or report.failed:
+        typer.echo(f"Profiled {len(report.profiled)} video(s), {len(report.failed)} failed.")
+
+    g = report.guesses
+    if g is not None:
+        for video_id, reason in g.failed:
+            typer.secho(f"[FAILED]  category for video {video_id}: {reason}", fg=typer.colors.RED)
+            failed = True
+        if g.skipped_reason:
+            typer.secho(f"Category guesses skipped: {g.skipped_reason}", fg=typer.colors.YELLOW)
+        elif g.guessed:
+            typer.echo(f"Guessed categories for {len(g.guessed)} video(s).")
+
+    nothing_done = not (report.profiled or report.failed or (g and (g.guessed or g.failed)))
+    if nothing_done and not (g and g.skipped_reason):
+        typer.echo("Nothing to do. Use --redo to rebuild existing profiles.")
+    if failed:
         raise typer.Exit(code=1)
 
 

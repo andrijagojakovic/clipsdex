@@ -142,6 +142,8 @@ class Category(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True)
+    # One line for the LLM prompt; small models misread bare names (CLAUDE.md §15).
+    description: str | None = None
     created_by: CreatedBy = Field(default=CreatedBy.SYSTEM, sa_type=enum_type(CreatedBy))
     color: str | None = None
     created_at: datetime = Field(default_factory=utcnow)

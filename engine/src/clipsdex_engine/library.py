@@ -35,6 +35,7 @@ class VideoDetails:
     profile: Profile | None
     category: Category | None
     category_assigned_by: AssignedBy | None
+    category_confidence: float | None = None
     results: list[Result] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
 
@@ -58,9 +59,9 @@ def list_videos(session: Session, filters: VideoFilter | None = None) -> list[Vi
     return list(session.exec(query))
 
 
-def current_category(
+def current_assignment(
     session: Session, video_id: int
-) -> tuple[Category, AssignedBy] | tuple[None, None]:
+) -> tuple[CategoryAssignment, Category] | None:
     """The latest user assignment wins; otherwise the latest automatic one (D11)."""
     user_first = case((col(CategoryAssignment.assigned_by) == AssignedBy.USER, 0), else_=1)
     query = (
@@ -73,9 +74,16 @@ def current_category(
         .limit(1)
     )
     row = session.exec(query).first()
-    if row is None:
+    return None if row is None else (row[0], row[1])
+
+
+def current_category(
+    session: Session, video_id: int
+) -> tuple[Category, AssignedBy] | tuple[None, None]:
+    found = current_assignment(session, video_id)
+    if found is None:
         return None, None
-    assignment, category = row
+    assignment, category = found
     return category, assignment.assigned_by
 
 
@@ -84,7 +92,8 @@ def video_details(session: Session, video_id: int) -> VideoDetails | None:
     if video is None:
         return None
     source = session.get_one(Source, video.source_id)
-    category, assigned_by = current_category(session, video_id)
+    found = current_assignment(session, video_id)
+    assignment, category = found if found else (None, None)
     results = session.exec(
         select(Result)
         .where(Result.video_id == video_id, col(Result.superseded).is_(False))
@@ -98,7 +107,8 @@ def video_details(session: Session, video_id: int) -> VideoDetails | None:
         source=source,
         profile=session.get(Profile, video_id),
         category=category,
-        category_assigned_by=assigned_by,
+        category_assigned_by=assignment.assigned_by if assignment else None,
+        category_confidence=assignment.confidence if assignment else None,
         results=list(results),
         artifacts=list(artifacts),
     )

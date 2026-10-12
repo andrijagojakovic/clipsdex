@@ -6,13 +6,14 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 from typer.testing import CliRunner
 
-from clipsdex_engine import config, db, media
+from clipsdex_engine import config, db, llm, media
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.artifacts import audio
 from clipsdex_engine.cli import app
 from clipsdex_engine.config import DataPaths
 from clipsdex_engine.db.models import Artifact, Profile, Source, SourceType, Video
 from clipsdex_engine.sources import manual
+from mocks.fake_llm import FakeLLM
 from synthetic import FakeReader, FakeTagger, SyntheticMedia, needs_ffmpeg
 
 pytestmark = needs_ffmpeg
@@ -182,5 +183,41 @@ def test_cli_profile_and_show(
     assert "size 320x240, audio yes" in shown.output
     assert "Cached artifacts: audio" in shown.output
 
-    again = runner.invoke(app, ["profile", "--video", "1"])
-    assert "Nothing to profile" in again.output
+    again = runner.invoke(app, ["profile", "--video", "1", "--no-guess"])
+    assert "Nothing to do" in again.output
+
+
+def test_cli_profile_guesses_category(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_media: SyntheticMedia
+) -> None:
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path / "data"))
+    monkeypatch.setattr(quick_profile, "default_models", lambda *_a, **_k: fake_models())
+    reply = '{"category": "edit", "confidence": 0.8, "reason": "music and a test pattern"}'
+    fake = FakeLLM(default_reply=reply)
+    monkeypatch.setattr(llm, "default_provider", lambda *_a, **_k: fake)
+    runner = CliRunner()
+    runner.invoke(app, ["import", str(synthetic_media.with_audio)])
+
+    result = runner.invoke(app, ["profile"])
+
+    assert result.exit_code == 0, result.output
+    assert "Guessed categories for 1 video(s)." in result.output
+    shown = runner.invoke(app, ["show", "1"]).output
+    assert "Category:   edit (auto, 80% sure)" in shown
+    assert "found by quick profile + gemma3:4b: music and a test pattern" in shown
+
+
+def test_cli_profile_without_ollama_keeps_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_media: SyntheticMedia
+) -> None:
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path / "data"))
+    monkeypatch.setattr(quick_profile, "default_models", lambda *_a, **_k: fake_models())
+    runner = CliRunner()
+    runner.invoke(app, ["import", str(synthetic_media.with_audio)])
+
+    result = runner.invoke(app, ["profile"])  # unit-test default: Ollama "not running"
+
+    assert result.exit_code == 0, result.output
+    assert "Profiled 1 video(s), 0 failed." in result.output
+    assert "Category guesses skipped" in result.output
+    assert runner.invoke(app, ["profile", "--no-guess"]).output.startswith("Nothing to do")
