@@ -38,7 +38,7 @@ def test_structured_answer() -> None:
         TEXT_MODEL,
         [
             # Categories need descriptions: with bare names, gemma3:4b once read "edit"
-            # as "editing advice" and picked it for this caption (see CLAUDE.md §15).
+            # as "editing advice" and picked it for this caption.
             Message(
                 "user",
                 "Categories: business = advice about work, money, clients; "

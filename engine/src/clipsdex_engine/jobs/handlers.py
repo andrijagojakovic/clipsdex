@@ -2,7 +2,7 @@
 
 A ``Handler`` runs one job name (e.g. "transcript"). It names the ``Resource`` its jobs need
 (e.g. "ollama:gemma3:4b"); the worker keeps one resource loaded at a time and runs every
-ready job of that resource before switching (D16).
+ready job of that resource before switching.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""The one HTTP client for all external calls (CLAUDE.md §8).
+"""The one HTTP client for all external calls.
 
 Timeouts, retries with backoff and a User-Agent naming the project. Never log secrets.
 """

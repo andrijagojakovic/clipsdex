@@ -1,4 +1,4 @@
-"""SQLite job queue (CLAUDE.md §5.4, step 3.1).
+"""SQLite job queue (step 3.1).
 
 Status flow: queued -> running -> done | failed | cancelled. A failed attempt that may
 succeed later goes back to queued until ``MAX_ATTEMPTS``.

@@ -243,7 +243,7 @@ def test_cli_queue_then_worker_profiles_and_guesses(
     assert result.exit_code == 0, result.output
     assert "Done 4, failed 0" in result.output
     lines = [line.strip() for line in result.output.splitlines()]
-    # D16: all profiles with the profile models, then one Ollama load for all guesses.
+    # All profiles with the profile models, then one Ollama load for all guesses.
     assert lines.index("load profile-models") < lines.index("unload profile-models")
     assert lines.index("unload profile-models") < lines.index("load ollama:gemma3:4b")
     assert fake.events == ["load gemma3:4b", "unload gemma3:4b"]

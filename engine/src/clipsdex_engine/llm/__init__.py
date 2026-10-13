@@ -36,6 +36,6 @@ __all__ = [
 def default_provider(base_url: str | None = None) -> LLMProvider:
     """Ollama at ``base_url``, else ``CLIPSDEX_OLLAMA_URL``, else the standard local port.
 
-    (Phase 8 adds the app-managed runtime on its own port, D15.)
+    (Step 8.2 adds an app-managed runtime on its own port.)
     """
     return OllamaProvider(base_url or os.environ.get(OLLAMA_URL_ENV) or DEFAULT_URL)

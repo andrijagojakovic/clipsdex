@@ -50,7 +50,7 @@ def seed(engine: Engine) -> None:
         session.flush()
         session.add_all(
             [
-                # Newer auto guess must NOT override an older user choice (D11).
+                # Newer auto guess must NOT override an older user choice.
                 CategoryAssignment(
                     video_id=2, category_id=2, assigned_by=AssignedBy.USER, created_at=T0
                 ),

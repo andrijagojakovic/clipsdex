@@ -1,4 +1,4 @@
-"""The single background worker and its model-grouping scheduler (CLAUDE.md §5.4, D16).
+"""The single background worker and its model-grouping scheduler (one heavy model loaded at a time).
 
 Loop: recover interrupted jobs -> fail jobs whose dependencies failed -> pick a resource
 (keep the loaded one while it has ready work, else the one with the oldest ready job) ->

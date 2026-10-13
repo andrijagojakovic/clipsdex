@@ -1,4 +1,4 @@
-"""Structured (JSON) answers: ask with a schema, validate with Pydantic, retry once (§8)."""
+"""Structured (JSON) answers: ask with a schema, validate with Pydantic, retry once."""
 
 from __future__ import annotations
 

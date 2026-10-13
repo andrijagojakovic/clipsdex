@@ -1,4 +1,4 @@
-"""In-memory LLMProvider for unit tests: no Ollama, no network (CLAUDE.md §8)."""
+"""In-memory LLMProvider for unit tests: no Ollama, no network."""
 
 from __future__ import annotations
 

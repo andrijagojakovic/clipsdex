@@ -38,3 +38,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Private project notes (kept local)
+CLAUDE.md

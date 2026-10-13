@@ -1,4 +1,4 @@
-"""Database tables (CLAUDE.md §11).
+"""Database tables.
 
 Conventions:
 - Datetimes are timezone-aware and stored as UTC (SQLModel rejects naive ones); use ``utcnow()``.
@@ -78,7 +78,7 @@ class Video(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     source_id: int = Field(foreign_key="sources.id", index=True, ondelete="CASCADE")
     original_url: str | None = Field(default=None, unique=True)
-    file_path: str | None = None  # None once the file is deleted (D10) or never downloaded
+    file_path: str | None = None  # None once the file is deleted or never downloaded
     content_hash: str | None = Field(default=None, unique=True)
     author: str | None = Field(default=None, index=True)
     caption: str | None = None
@@ -142,7 +142,7 @@ class Category(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True)
-    # One line for the LLM prompt; small models misread bare names (CLAUDE.md §15).
+    # One line for the LLM prompt; small models misread bare names.
     description: str | None = None
     created_by: CreatedBy = Field(default=CreatedBy.SYSTEM, sa_type=enum_type(CreatedBy))
     color: str | None = None
@@ -150,7 +150,7 @@ class Category(SQLModel, table=True):
 
 
 class CategoryAssignment(SQLModel, table=True):
-    """History of assignments; the latest user assignment wins (D11)."""
+    """History of assignments; the latest user assignment wins."""
 
     __tablename__ = "category_assignments"  # pyright: ignore[reportAssignmentType]
 
@@ -163,7 +163,7 @@ class CategoryAssignment(SQLModel, table=True):
 
 
 class Correction(SQLModel, table=True):
-    """A user moving a video between categories; feeds few-shot examples (D11)."""
+    """A user moving a video between categories; feeds few-shot examples."""
 
     __tablename__ = "corrections"  # pyright: ignore[reportAssignmentType]
 
@@ -187,7 +187,7 @@ class Job(SQLModel, table=True):
     )
     params: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
     status: JobStatus = Field(default=JobStatus.QUEUED, index=True, sa_type=enum_type(JobStatus))
-    # What must be loaded to run it, e.g. "ollama:gemma3:4b"; the scheduler groups by it (D16).
+    # What must be loaded to run it, e.g. "ollama:gemma3:4b"; the scheduler groups by it.
     resource: str = Field(default="cpu", index=True)
     progress: float = 0.0
     error: str | None = None

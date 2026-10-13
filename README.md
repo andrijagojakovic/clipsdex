@@ -11,7 +11,7 @@ ClipsDex analyzes the reels you saved on Instagram (TikTok later) and helps you 
 
 Everything runs on your own computer with local AI models. Nothing leaves your machine unless you choose a cloud model with your own API key.
 
-> **Status:** early development. Nothing is usable yet. Follow progress in [CLAUDE.md](CLAUDE.md).
+> **Status:** early development. Nothing is usable yet. See the [roadmap](ROADMAP.md) for what is done and what comes next.
 
 ## Development
 

@@ -1,4 +1,4 @@
-"""Transcript artifact (CLAUDE.md §5.2): speech-to-text with timestamps and detected language.
+"""Transcript artifact: speech-to-text with timestamps and detected language.
 
 Stored inline in ``artifacts.data``:
 ``{"language", "language_probability", "duration", "segments": [{start, end, text}], "text"}``.

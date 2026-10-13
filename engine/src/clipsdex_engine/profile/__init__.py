@@ -1,10 +1,10 @@
-"""Level 1 quick profile (CLAUDE.md §5.1): cheap, automatic facts about every video.
+"""Level 1 quick profile: cheap, automatic facts about every video.
 
 Implemented so far: ffprobe metadata and the audio artifact (2.1), speech/music/silence
 ratios and the vocals flag (2.2), cut count (2.3), quick OCR (2.4). A second pass makes
 the first category guess with a small text model (2.6, ``category_guess.py``).
 
-Heavy models are loaded at most once per run, and only when needed (D16).
+Heavy models are loaded at most once per run, and only when needed.
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ def run_quick_profile(
     provider: llm.LLMProvider | None = None,
     guess: bool = True,
 ) -> ProfileReport:
-    """Profile videos one by one, then guess categories in one batch (one LLM load, D16).
+    """Profile videos one by one, then guess categories in one batch (one LLM load).
 
     Raises ``net.DownloadError`` if a needed model can't be fetched. A missing or stopped
     Ollama does not fail the run: profiles are kept and ``report.guesses`` says why.

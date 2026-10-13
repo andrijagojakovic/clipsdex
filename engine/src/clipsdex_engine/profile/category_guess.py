@@ -1,9 +1,9 @@
-"""First category guess (CLAUDE.md §5.1 step 6, plan step 2.6).
+"""First category guess (step 2.6).
 
 A small text model reads cheap facts only: metadata, the quick profile numbers and on-screen
 text. No transcript, no vision. The full ``categorize`` analyzer (4.2) does the deep version.
 
-Work is grouped by model (D16): all guesses of a run use one loaded model, unloaded at the end.
+Work is grouped by model: all guesses of a run use one loaded model, unloaded at the end.
 """
 
 from __future__ import annotations
@@ -221,5 +221,5 @@ def run_category_guess(
                 report.guessed.append(video_id)
     finally:
         with contextlib.suppress(llm.LLMError):
-            provider.unload(model)  # D16: free memory for the next heavy model
+            provider.unload(model)  # free memory for the next heavy model
     return report

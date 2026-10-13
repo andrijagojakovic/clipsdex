@@ -62,7 +62,7 @@ def list_videos(session: Session, filters: VideoFilter | None = None) -> list[Vi
 def current_assignment(
     session: Session, video_id: int
 ) -> tuple[CategoryAssignment, Category] | None:
-    """The latest user assignment wins; otherwise the latest automatic one (D11)."""
+    """The latest user assignment wins; otherwise the latest automatic one."""
     user_first = case((col(CategoryAssignment.assigned_by) == AssignedBy.USER, 0), else_=1)
     query = (
         select(CategoryAssignment, Category)

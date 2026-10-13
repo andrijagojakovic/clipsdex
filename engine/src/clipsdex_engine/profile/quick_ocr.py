@@ -1,4 +1,4 @@
-"""Quick on-screen text check (CLAUDE.md §5.1, step 2.4): OCR on 1-2 frames.
+"""Quick on-screen text check (step 2.4): OCR on 1-2 frames.
 
 Only answers "is there text, and what does it say". The full OCR artifact over all
 selected frames comes in step 3.5.

@@ -1,4 +1,4 @@
-"""The provider interface every LLM/vision/embedding call goes through (CLAUDE.md §8).
+"""The provider interface every LLM/vision/embedding call goes through.
 
 Ollama is the only provider now; LiteLLM (cloud, bring-your-own-key) comes later and must
 implement the same interface. No module outside ``llm/`` talks to a model server directly.
@@ -75,7 +75,7 @@ class LLMProvider(Protocol):
     def embed(self, model: str, texts: list[str]) -> list[list[float]]: ...
 
     def load(self, model: str, keep_alive: str | int = "10m") -> None:
-        """Load a model now and keep it in memory (the scheduler groups work by model, D16)."""
+        """Load a model now and keep it in memory (the scheduler groups work by model)."""
         ...
 
     def unload(self, model: str) -> None:

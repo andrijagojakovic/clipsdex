@@ -1,4 +1,4 @@
-"""Synthetic test media, generated on the fly with ffmpeg (never real clips; see CLAUDE.md §8)."""
+"""Synthetic test media, generated on the fly with ffmpeg (never real clips)."""
 
 import subprocess
 from dataclasses import dataclass

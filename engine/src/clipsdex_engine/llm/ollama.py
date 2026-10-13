@@ -1,4 +1,4 @@
-"""Ollama provider (local, default; D1/D15). API: https://github.com/ollama/ollama/blob/main/docs/api.md"""
+"""Ollama provider, the local default. API: https://github.com/ollama/ollama/blob/main/docs/api.md"""
 
 from __future__ import annotations
 

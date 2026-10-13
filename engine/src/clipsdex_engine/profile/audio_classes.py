@@ -1,4 +1,4 @@
-"""Speech / music / silence ratios and a best-effort vocals flag (CLAUDE.md §5.1, step 2.2).
+"""Speech / music / silence ratios and a best-effort vocals flag (step 2.2).
 
 The audio is cut into 2 s segments (1 s was too short to recognize music reliably).
 Quiet segments count as silence (energy check, no model); the rest go through the tagger.

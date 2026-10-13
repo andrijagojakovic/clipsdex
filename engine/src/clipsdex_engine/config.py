@@ -3,7 +3,7 @@
 User data lives in the platformdirs user data dir (``%LOCALAPPDATA%\\ClipsDex`` on Windows).
 Set ``CLIPSDEX_DATA_DIR`` to use another folder (development, tests, portable setups).
 
-Settings here are non-secret only; API keys go to ``keyring`` (see CLAUDE.md §8).
+Settings here are non-secret only; API keys go to ``keyring``.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class Preset(StrEnum):
 
 
 class ModelChoice(BaseModel):
-    """Models and frame budget for one preset (CLAUDE.md §4)."""
+    """Models and frame budget for one preset."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -83,7 +83,7 @@ class ModelChoice(BaseModel):
     max_frames: int = Field(ge=1)
 
 
-# Ollama tags must be verified against the Ollama library before use (see CLAUDE.md §15).
+# Ollama tags must be verified against the Ollama library before use.
 PRESETS: dict[Preset, ModelChoice] = {
     Preset.FAST: ModelChoice(
         whisper="base",
@@ -120,8 +120,8 @@ class Settings(BaseModel):
     vision_model: str | None = None
     text_model: str | None = None
     embedding_model: str | None = None
-    delete_after_analysis: bool = True  # D10
-    downloader_enabled: bool = False  # D9: only after the consent screen
+    delete_after_analysis: bool = True  # only files the app stored itself
+    downloader_enabled: bool = False  # opt-in, only after the consent screen
 
     def models(self) -> ModelChoice:
         """The preset's models with any user overrides applied."""

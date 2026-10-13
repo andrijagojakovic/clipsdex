@@ -1,4 +1,4 @@
-"""Artifacts: cached intermediate results shared between analyzers (CLAUDE.md §5.2).
+"""Artifacts: cached intermediate results shared between analyzers.
 
 An artifact is identified by (video, type, params hash). Files live under
 ``<data dir>/artifacts/<video id>/`` and are stored in the DB relative to the data dir,

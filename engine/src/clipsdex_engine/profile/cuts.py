@@ -1,4 +1,4 @@
-"""Scene cut count (CLAUDE.md §5.1, step 2.3) with PySceneDetect's ContentDetector.
+"""Scene cut count (step 2.3) with PySceneDetect's ContentDetector.
 
 Frames come from ffmpeg at low resolution and a reduced frame rate (fast, and safe for
 non-ASCII paths); PySceneDetect only does the detection.

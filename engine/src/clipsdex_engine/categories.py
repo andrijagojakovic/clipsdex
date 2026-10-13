@@ -1,7 +1,7 @@
 """Categories: the built-in starting set, and helpers to read them for prompts.
 
 Users can rename, add and merge categories later (step 5.2). Every category has a one-line
-description because small local models misread bare names (CLAUDE.md §15).
+description because small local models misread bare names.
 """
 
 from __future__ import annotations

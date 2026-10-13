@@ -121,7 +121,7 @@ def test_guesses_are_saved_with_how_they_were_found(engine: Engine) -> None:
     report = cg.run_category_guess(engine, fake, MODEL)
 
     assert report.guessed == [1, 2] and report.failed == []
-    assert fake.events == [f"load {MODEL}", f"unload {MODEL}"]  # one load for all (D16)
+    assert fake.events == [f"load {MODEL}", f"unload {MODEL}"]  # one load for all
     assert "Hard cuts: 14" in fake.calls[0].messages[1].content
     with Session(engine) as session:
         details = library.video_details(session, 1)

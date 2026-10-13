@@ -4,7 +4,7 @@ Videos are identified by a SHA-256 hash of their content, so the same file is ne
 imported twice, even if it was renamed or moved.
 
 These files belong to the user: ClipsDex only reads them and never deletes them.
-"Delete after analysis" (D10) applies only to files the app itself stored.
+"Delete after analysis" applies only to files the app itself stored.
 """
 
 from __future__ import annotations
