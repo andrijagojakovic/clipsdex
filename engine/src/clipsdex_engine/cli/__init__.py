@@ -196,6 +196,15 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
                 text = a.data.get("text") or ""
                 typer.echo(f"\nTranscript ({a.params.get('model')}, language: {language}):")
                 typer.echo(f"  {text[:300] + ('…' if len(text) > 300 else '') or '(empty)'}")
+            if a.type == "frames" and isinstance(a.data, dict):
+                shots = a.data.get("frames", [])
+                times = ", ".join(f"{f['t']:.1f}s" for f in shots)
+                typer.echo(
+                    f"\nKey frames: {len(shots)} of {a.data.get('candidates')} candidates, "
+                    f"{a.data.get('scenes')} scene(s), budget {a.data.get('budget')}: {times}"
+                )
+                if a.path:
+                    typer.echo(f"  {config.data_dir() / a.path}")
 
         if details.artifacts:
             names = ", ".join(sorted({a.type for a in details.artifacts}))
@@ -271,6 +280,20 @@ def transcribe(
     env = WorkerEnv(db.open_database(paths), paths)
     ids = builtin.enqueue_transcripts(env, video_ids=video, redo=redo)
     typer.echo(f"Queued {len(ids)} transcript job(s). Run them with: clipsdex worker")
+
+
+@app.command("frames")
+def frames_cmd(
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    redo: Annotated[bool, typer.Option(help="Select frames again if they exist.")] = False,
+) -> None:
+    """Queue key-frame selection for videos (`clipsdex worker` runs it)."""
+    paths = config.data_paths()
+    env = WorkerEnv(db.open_database(paths), paths)
+    ids = builtin.enqueue_frames(env, video_ids=video, redo=redo)
+    typer.echo(f"Queued {len(ids)} frame job(s). Run them with: clipsdex worker")
 
 
 @app.command()

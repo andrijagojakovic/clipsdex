@@ -11,9 +11,9 @@ from typing import Any
 from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
-from clipsdex_engine import db
+from clipsdex_engine import artifacts, db
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.artifacts import transcript
+from clipsdex_engine.artifacts import frames, transcript
 from clipsdex_engine.db.models import Artifact, JobKind, Video
 from clipsdex_engine.jobs import queue
 from clipsdex_engine.jobs.handlers import (
@@ -126,10 +126,56 @@ class TranscriptHandler:
             raise PermanentJobError(str(e)) from e
 
 
+class FramesHandler:
+    name = frames.TYPE
+    kind = JobKind.ARTIFACT
+
+    def resource_key(self, video_id: int | None, params: dict[str, Any]) -> str:
+        return "cpu"  # ffmpeg + OpenCV only, no model to load
+
+    def make_resource(self, env: WorkerEnv, key: str) -> Resource:
+        return Resource(key)
+
+    def run(self, ctx: JobContext) -> None:
+        assert ctx.job.video_id is not None
+        try:
+            frames.build_frames(
+                ctx.env.engine,
+                ctx.env.paths,
+                ctx.job.video_id,
+                ctx.job.params["budget"],
+                progress=ctx.progress,
+            )
+        except frames.NoVideoFileError as e:
+            raise PermanentJobError(str(e)) from e
+
+
 PROFILE = ProfileHandler()
 CATEGORY_GUESS = CategoryGuessHandler()
 TRANSCRIPT = TranscriptHandler()
-HANDLERS: dict[str, Handler] = {h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT)}
+FRAMES = FramesHandler()
+HANDLERS: dict[str, Handler] = {h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES)}
+
+
+def enqueue_frames(
+    env: WorkerEnv, video_ids: Iterable[int] | None = None, redo: bool = False
+) -> list[int]:
+    """Queue key-frame selection (preset's frame budget) for videos with a local file."""
+    with Session(env.engine) as session:
+        budget = db.load_settings(session).models().max_frames
+        params = frames.params_for(budget)
+        query = select(Video).where(
+            col(Video.file_path).is_not(None), col(Video.file_deleted).is_(False)
+        )
+        if video_ids is not None:
+            query = query.where(col(Video.id).in_(list(video_ids)))
+        ids = [
+            v.id
+            for v in session.exec(query.order_by(col(Video.id)))
+            if v.id is not None
+            and (redo or artifacts.find(session, v.id, frames.TYPE, params) is None)
+        ]
+    return queue.enqueue_many(env.engine, [spec_for(FRAMES, vid, params) for vid in ids])
 
 
 def enqueue_transcripts(
