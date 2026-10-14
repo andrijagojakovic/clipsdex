@@ -213,6 +213,8 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
                         typer.echo(f"  {f['t']:.1f}s  could not describe: {f['error']}")
                     else:
                         typer.echo(f"  {f['t']:.1f}s  [{f['shot_type']}] {f['description']}")
+                for f in a.data.get("skipped", []):
+                    typer.echo(f"  {f['t']:.1f}s  skipped: {f['reason']}")
             if a.type == "ocr" and isinstance(a.data, dict):
                 lines = a.data.get("lines", [])
                 typer.echo(f"\nOn-screen text ({len(lines)} unique line(s)):")

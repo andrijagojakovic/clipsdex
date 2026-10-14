@@ -16,7 +16,7 @@ from typing import Literal
 from sqlmodel import Session, col, select
 
 from clipsdex_engine import artifacts
-from clipsdex_engine.artifacts import frames
+from clipsdex_engine.artifacts import frame_desc, frames
 from clipsdex_engine.db.models import Job, JobStatus, Profile
 
 Unit = Literal["video_seconds", "frames", "videos"]
@@ -37,7 +37,7 @@ DEFAULT_RATES: dict[str, float] = {
     "transcript": 0.5,  # Whisper small, int8, CPU
     "frames": 0.1,  # ~3 s for a 60 s 1080x1920 clip
     "ocr": 1.5,
-    "frame_descriptions": 75.0,  # gemma3:4b spends ~70 s encoding each image on CPU
+    "frame_descriptions": 60.0,  # gemma3:4b: ~45-55 s per image on CPU, more on battery
     "category_guess": 10.0,
 }
 
@@ -75,8 +75,12 @@ def units_for(session: Session, name: str, video_id: int, budget: int) -> float:
         return duration if duration and duration > 0 else UNKNOWN_DURATION_S
     found = artifacts.find(session, video_id, frames.TYPE, frames.params_for(budget))
     if found is not None and isinstance(found.data, dict):
-        return float(max(1, len(found.data.get("frames", []))))
-    return float(budget)  # not selected yet: at most the budget
+        count = max(1, len(found.data.get("frames", [])))
+    else:
+        count = budget  # not selected yet: at most the budget
+    if name == frame_desc.TYPE:  # only a few frames per video are described
+        count = min(count, frame_desc.max_described(budget))
+    return float(count)
 
 
 def rate(session: Session, name: str, resource: str, budget: int) -> Rate:
