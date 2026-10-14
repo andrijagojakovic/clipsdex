@@ -205,6 +205,13 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
                 )
                 if a.path:
                     typer.echo(f"  {config.data_dir() / a.path}")
+            if a.type == "ocr" and isinstance(a.data, dict):
+                lines = a.data.get("lines", [])
+                typer.echo(f"\nOn-screen text ({len(lines)} unique line(s)):")
+                for line in lines[:15]:
+                    typer.echo(f"  | {line['text']}  (from {line['first_t']:.1f}s)")
+                if len(lines) > 15:
+                    typer.echo(f"  … and {len(lines) - 15} more")
 
         if details.artifacts:
             names = ", ".join(sorted({a.type for a in details.artifacts}))
@@ -294,6 +301,20 @@ def frames_cmd(
     env = WorkerEnv(db.open_database(paths), paths)
     ids = builtin.enqueue_frames(env, video_ids=video, redo=redo)
     typer.echo(f"Queued {len(ids)} frame job(s). Run them with: clipsdex worker")
+
+
+@app.command("ocr")
+def ocr_cmd(
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    redo: Annotated[bool, typer.Option(help="Read the text again if it exists.")] = False,
+) -> None:
+    """Queue reading on-screen text from the key frames (`clipsdex worker` runs it)."""
+    paths = config.data_paths()
+    env = WorkerEnv(db.open_database(paths), paths)
+    ids = builtin.enqueue_ocr(env, video_ids=video, redo=redo)
+    typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
 
 
 @app.command()

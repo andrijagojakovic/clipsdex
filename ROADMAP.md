@@ -36,7 +36,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 - [x] **3.2** Background worker that groups work by model, so only one heavy model is loaded at a time
 - [x] **3.3** Transcripts with timestamps and language detection (faster-whisper, CPU)
 - [x] **3.4** Key frame selection: scene changes, near-duplicate removal, per-preset frame budget
-- [ ] **3.5** Full on-screen text extraction over the selected frames
+- [x] **3.5** Full on-screen text extraction over the selected frames
 - [ ] **3.6** Short factual frame descriptions with a local vision model
 - [ ] **3.7** Time estimates before a run (`clipsdex plan`)
 

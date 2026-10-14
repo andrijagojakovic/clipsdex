@@ -13,7 +13,7 @@ from sqlmodel import Session, col, select
 
 from clipsdex_engine import artifacts, db
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.artifacts import frames, transcript
+from clipsdex_engine.artifacts import frames, ocr, transcript
 from clipsdex_engine.db.models import Artifact, JobKind, Video
 from clipsdex_engine.jobs import queue
 from clipsdex_engine.jobs.handlers import (
@@ -26,6 +26,7 @@ from clipsdex_engine.jobs.handlers import (
     spec_for,
 )
 from clipsdex_engine.profile import category_guess
+from clipsdex_engine.profile.quick_ocr import RapidOcrReader, TextReader
 
 PROFILE_RESOURCE = "profile-models"  # PANNs + RapidOCR, in this process
 
@@ -150,11 +151,97 @@ class FramesHandler:
             raise PermanentJobError(str(e)) from e
 
 
+ReaderFactory = Callable[[], TextReader]
+
+
+class OcrResource(Resource):
+    """RapidOCR in this process (ONNX models ship with the package; nothing to download)."""
+
+    def __init__(self, key: str, factory: ReaderFactory) -> None:
+        super().__init__(key)
+        self.factory = factory
+        self.reader: TextReader | None = None
+
+    def load(self) -> None:
+        self.reader = self.factory()
+
+    def unload(self) -> None:
+        self.reader = None
+
+
+class OcrHandler:
+    name = ocr.TYPE
+    kind = JobKind.ARTIFACT
+
+    def __init__(self, factory: ReaderFactory = RapidOcrReader) -> None:
+        self.factory = factory
+
+    def resource_key(self, video_id: int | None, params: dict[str, Any]) -> str:
+        return "rapidocr"
+
+    def make_resource(self, env: WorkerEnv, key: str) -> Resource:
+        return OcrResource(key, self.factory)
+
+    def run(self, ctx: JobContext) -> None:
+        assert ctx.job.video_id is not None and isinstance(ctx.resource, OcrResource)
+        assert ctx.resource.reader is not None
+        try:
+            ocr.build_ocr(
+                ctx.env.engine,
+                ctx.env.paths,
+                ctx.job.video_id,
+                ctx.job.params["frames"]["budget"],
+                ctx.resource.reader,
+                progress=ctx.progress,
+            )
+        except ocr.NoFramesError as e:
+            raise PermanentJobError(str(e)) from e
+
+
 PROFILE = ProfileHandler()
 CATEGORY_GUESS = CategoryGuessHandler()
 TRANSCRIPT = TranscriptHandler()
 FRAMES = FramesHandler()
-HANDLERS: dict[str, Handler] = {h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES)}
+OCR = OcrHandler()
+HANDLERS: dict[str, Handler] = {
+    h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES, OCR)
+}
+
+
+def enqueue_ocr(
+    env: WorkerEnv, video_ids: Iterable[int] | None = None, redo: bool = False
+) -> list[int]:
+    """Queue OCR over the key frames; queues frame selection first where it is missing."""
+    with Session(env.engine) as session:
+        budget = db.load_settings(session).models().max_frames
+        frames_params, ocr_params = frames.params_for(budget), ocr.params_for(budget)
+        query = select(Video)
+        if video_ids is not None:
+            query = query.where(col(Video.id).in_(list(video_ids)))
+        todo: list[tuple[int, bool]] = []  # (video id, frames still needed)
+        for v in session.exec(query.order_by(col(Video.id))):
+            if v.id is None:
+                continue
+            if not redo and artifacts.find(session, v.id, ocr.TYPE, ocr_params) is not None:
+                continue
+            has_frames = artifacts.find(session, v.id, frames.TYPE, frames_params) is not None
+            has_file = v.file_path is not None and not v.file_deleted
+            if has_frames or has_file:
+                todo.append((v.id, not has_frames))
+
+    ids: list[int] = []
+    with db.session_scope(env.engine) as session:
+        for vid, needs_frames in todo:
+            after: tuple[int, ...] = ()
+            if needs_frames:
+                frames_job = queue.enqueue(session, spec_for(FRAMES, vid, frames_params))
+                assert frames_job.id is not None
+                ids.append(frames_job.id)
+                after = (frames_job.id,)
+            job = queue.enqueue(session, spec_for(OCR, vid, ocr_params, depends_on=after))
+            assert job.id is not None
+            ids.append(job.id)
+    return ids
 
 
 def enqueue_frames(
