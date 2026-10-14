@@ -136,7 +136,7 @@ def test_brief_plans_its_inputs_per_applicable_video(env: WorkerEnv) -> None:
     assert by_id[3].analyzers == ["brief"]
     assert by_id[3].missing == ["frames", "transcript", "ocr"]
     assert by_id[4].blocked is not None  # file gone, frames can't be taken
-    assert [j.name for j in plan.jobs] == ["frames", "transcript", "ocr"]
+    assert [j.name for j in plan.jobs] == ["frames", "transcript", "ocr", "brief"]
 
 
 class EchoTranscript(Analyzer):

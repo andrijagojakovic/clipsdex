@@ -18,6 +18,7 @@ from clipsdex_engine.db.models import (
     JobKind,
     JobStatus,
     Profile,
+    Result,
     Source,
     SourceType,
     Video,
@@ -101,7 +102,7 @@ def test_brief_for_business_lists_missing_and_blocked(env: WorkerEnv) -> None:
     assert by_id[1].missing == ["frames", "ocr"] and by_id[1].blocked is None
     assert by_id[2].blocked is not None and "file is gone" in by_id[2].blocked
     names = [j.name for j in plan.jobs]
-    assert names == ["frames", "ocr"]  # nothing for the blocked video, dependencies first
+    assert names == ["frames", "ocr", "brief"]  # nothing for the blocked video, inputs first
     assert plan.total_seconds > 0
 
 
@@ -141,9 +142,9 @@ def test_queue_plan_queues_missing_work_once(env: WorkerEnv) -> None:
     ids = planning.queue_plan(env, plan)
     with Session(env.engine) as session:
         names = sorted(session.get_one(Job, i).name for i in ids)
-    assert names == ["frames", "ocr"]
+    assert names == ["brief", "frames", "ocr"]
     assert planning.queue_plan(env, plan) == ids  # same jobs, not new ones
-    assert queue.counts(env.engine)[JobStatus.QUEUED] == 2
+    assert queue.counts(env.engine)[JobStatus.QUEUED] == 3
 
 
 def test_humanize() -> None:
@@ -165,7 +166,7 @@ def test_cli_plan(env: WorkerEnv, monkeypatch: pytest.MonkeyPatch) -> None:
     queued = runner.invoke(
         app, ["plan", "--analyzer", "brief", "--category", "business", "--queue"]
     )
-    assert "Queued 2 job(s)" in queued.output
+    assert "Queued 3 job(s)" in queued.output
     assert runner.invoke(app, ["plan"]).exit_code == 1
     assert runner.invoke(app, ["plan", "--analyzer", "nope"]).exit_code == 1
 
@@ -175,4 +176,11 @@ def test_ready_when_everything_exists(env: WorkerEnv) -> None:
         add_artifact(session, 1, "frames", frames.params_for(4), {"frames": [{"t": 1}]})
         add_artifact(session, 1, "ocr", ocr.params_for(4), {"text": ""})
     plan = planning.build_plan(env.engine, ["brief"], video_ids=[1])
-    assert plan.videos[0].missing == [] and plan.jobs == []
+    assert plan.videos[0].missing == [] and [j.name for j in plan.jobs] == ["brief"]
+
+    with db.session_scope(env.engine) as session:
+        session.add(Result(video_id=1, analyzer="brief", value={}, method="test"))
+    plan = planning.build_plan(env.engine, ["brief"], video_ids=[1])
+    assert plan.videos[0].done == ["brief"] and plan.jobs == []
+    again = planning.build_plan(env.engine, ["brief"], video_ids=[1], redo=True)
+    assert again.videos[0].analyzers == ["brief"]

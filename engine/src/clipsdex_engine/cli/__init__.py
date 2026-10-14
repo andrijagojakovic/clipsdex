@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -360,6 +362,9 @@ def plan(
         ),
     ] = None,
     queue_it: Annotated[bool, typer.Option("--queue", help="Also queue the missing work.")] = False,
+    redo: Annotated[
+        bool, typer.Option(help="Run analyzers again where they already have a result.")
+    ] = False,
 ) -> None:
     """Show what a request would compute and how long it would take on this computer."""
     paths = config.data_paths()
@@ -375,7 +380,7 @@ def plan(
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(code=1) from e
 
-    p = planning.build_plan(engine, analyzer or [], artifact or [], category, video)
+    p = planning.build_plan(engine, analyzer or [], artifact or [], category, video, redo=redo)
     if video is not None:
         scope = "the selected videos"
     elif category:
@@ -395,7 +400,9 @@ def plan(
         elif v.missing:
             status = "needs " + ", ".join(v.missing)
         else:
-            status = "ready" if v.analyzers or not v.skipped else "nothing to do"
+            status = "ready" if v.analyzers or not (v.skipped or v.done) else "nothing to do"
+        if v.done:
+            status += f" (already done: {', '.join(v.done)}; --redo runs it again)"
         typer.echo(f"  #{v.video_id:<4} {v.name[:40]:<40} {status}")
         for name, reason in v.skipped.items():
             typer.echo(f"        skips {name}: {reason}")
@@ -426,6 +433,80 @@ def plan(
     if queue_it:
         ids = planning.queue_plan(WorkerEnv(engine, paths), p)
         typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+
+
+@app.command("brief")
+def brief_cmd(
+    category: Annotated[
+        str | None,
+        typer.Option(help="Videos in this category (default: business and education)."),
+    ] = None,
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    title: Annotated[str | None, typer.Option(help="Title of the brief.")] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(help="Markdown file to write (default: the exports folder)."),
+    ] = None,
+    merge: Annotated[
+        bool, typer.Option(help="Group the points of all videos into themes (slower).")
+    ] = True,
+) -> None:
+    """Write one Markdown brief from the notes of many videos."""
+    from clipsdex_engine.analyzers import brief
+
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    with Session(engine) as session:
+        if video is None and category is None:
+            videos = [
+                v
+                for c in brief.Brief.default_categories
+                for v in planning.select_videos(session, category=c)
+            ]
+        else:
+            videos = planning.select_videos(session, category=category, video_ids=video)
+        sources, missing = brief.collect_sources(session, videos)
+        model = db.load_settings(session).models().text
+    if missing:
+        ids = " ".join(f"--video {i}" for i in missing)
+        typer.secho(
+            f"{len(missing)} video(s) have no notes yet. Make them first:\n"
+            f"  clipsdex plan --analyzer brief {ids} --queue\n  clipsdex worker",
+            fg=typer.colors.YELLOW,
+        )
+    with_advice = [s for s in sources if s.notes.get("has_advice", True)]
+    if not with_advice:
+        typer.secho("No notes with advice to put in a brief.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    merged = None
+    if merge and len(with_advice) > 1:
+        provider = llm.default_provider()
+        try:
+            provider.load(model, keep_alive="10m")
+            report = brief.merge_briefs(
+                provider, model, sources, progress=lambda m: typer.echo(f"  {m}…")
+            )
+        except llm.LLMError as e:
+            typer.secho(f"Could not merge the notes: {e}", fg=typer.colors.RED)
+            raise typer.Exit(code=1) from e
+        finally:
+            with contextlib.suppress(llm.LLMError):
+                provider.unload(model)  # only one heavy model in memory at a time
+        merged = report.brief
+
+    today = datetime.now().date()
+    name = title or f"Brief: {category or ', '.join(brief.Brief.default_categories)}"
+    text = brief.render_markdown(name, sources, merged, model, today)
+    if output is None:
+        slug = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-") or "brief"
+        output = paths.root / "exports" / f"{slug}-{today.isoformat()}.md"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(text, encoding="utf-8")
+    themes = f", {len(merged.themes)} theme(s)" if merged else ""
+    typer.echo(f"Brief from {len(with_advice)} video(s){themes}: {output}")
 
 
 @app.command()

@@ -23,7 +23,7 @@ from clipsdex_engine import artifacts, db, library
 from clipsdex_engine.analyzers import Analyzer
 from clipsdex_engine.artifacts import audio, current, frames, transcript
 from clipsdex_engine.config import ModelChoice
-from clipsdex_engine.db.models import Profile, Video
+from clipsdex_engine.db.models import Profile, Result, Video
 from clipsdex_engine.jobs import builtin, estimates
 from clipsdex_engine.jobs.handlers import WorkerEnv
 
@@ -34,6 +34,7 @@ class VideoPlan:
     name: str
     analyzers: list[str] = field(default_factory=list)  # will run on this video
     skipped: dict[str, str] = field(default_factory=dict)  # analyzer -> why not
+    done: list[str] = field(default_factory=list)  # analyzers that already have a result
     missing: list[str] = field(default_factory=list)  # artifacts to compute first
     blocked: str | None = None  # why it can't be done, if so
 
@@ -118,6 +119,19 @@ def _category(session: Session, video: Video) -> str | None:
     return found.name.casefold() if found is not None else None
 
 
+def _has_result(session: Session, video_id: int, analyzer: str) -> bool:
+    return (
+        session.exec(
+            select(Result.id).where(
+                Result.video_id == video_id,
+                Result.analyzer == analyzer,
+                col(Result.superseded).is_(False),
+            )
+        ).first()
+        is not None
+    )
+
+
 def _in_scope(analyzer: Analyzer, video_category: str | None) -> bool:
     defaults = {c.casefold() for c in analyzer.default_categories}
     return not defaults or video_category in defaults
@@ -129,7 +143,9 @@ def build_plan(
     artifact_names: Iterable[str] = (),
     category: str | None = None,
     video_ids: Iterable[int] | None = None,
+    redo: bool = False,
 ) -> Plan:
+    """``redo`` runs analyzers again on videos that already have their result."""
     names = tuple(dict.fromkeys(analyzer_names))
     wanted_artifacts = tuple(dict.fromkeys(artifact_names))
     check_names(names, wanted_artifacts)
@@ -150,13 +166,16 @@ def build_plan(
             for a in chosen:
                 if not picked_by_id and category is None and not _in_scope(a, video_category):
                     continue
+                if not redo and _has_result(session, v.id, a.name):
+                    vp.done.append(a.name)
+                    continue
                 if not picked_by_id:
                     check = a.is_applicable(v, profile)
                     if not check.applies:
                         vp.skipped[a.name] = check.reason
                         continue
                 vp.analyzers.append(a.name)
-            if not (vp.analyzers or vp.skipped or wanted_artifacts):
+            if not (vp.analyzers or vp.skipped or vp.done or wanted_artifacts):
                 continue  # outside every requested analyzer's categories
 
             needed = set(wanted_artifacts)
