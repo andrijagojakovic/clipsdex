@@ -1,6 +1,6 @@
-"""Job types available today: the quick profile and the first category guess.
+"""Job types: the quick profile, the first category guess, artifacts and analyzers.
 
-Later steps register their own handlers here (transcript, frames, OCR, analyzers).
+Analyzer jobs are generic: one handler per registered analyzer.
 """
 
 from __future__ import annotations
@@ -11,10 +11,11 @@ from typing import Any
 from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
-from clipsdex_engine import artifacts, db
+from clipsdex_engine import analyzers, artifacts, db
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.artifacts import frame_desc, frames, ocr, transcript
-from clipsdex_engine.db.models import Artifact, JobKind, Video
+from clipsdex_engine.artifacts import current, frame_desc, frames, ocr, transcript
+from clipsdex_engine.config import ModelChoice
+from clipsdex_engine.db.models import Artifact, Job, JobKind, Profile, Video
 from clipsdex_engine.jobs import queue
 from clipsdex_engine.jobs.handlers import (
     Handler,
@@ -235,6 +236,97 @@ FRAME_DESCRIPTIONS = FrameDescriptionsHandler()
 HANDLERS: dict[str, Handler] = {
     h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES, OCR, FRAME_DESCRIPTIONS)
 }
+
+
+class AnalyzerHandler:
+    """Runs one analyzer on one video and stores its result.
+
+    Job params hold the models the job was planned with, so the analyzer reads exactly the
+    artifacts that were computed for it, even if the preset changes in between.
+    """
+
+    kind = JobKind.ANALYZER
+
+    def __init__(self, analyzer: analyzers.Analyzer) -> None:
+        self.analyzer = analyzer
+        self.name = analyzer.name
+
+    def resource_key(self, video_id: int | None, params: dict[str, Any]) -> str:
+        return self.analyzer.resource_key(ModelChoice(**params["models"]))
+
+    def make_resource(self, env: WorkerEnv, key: str) -> Resource:
+        if key.startswith("ollama:"):
+            return OllamaResource(key, env, model=key.removeprefix("ollama:"))
+        return Resource(key)
+
+    def run(self, ctx: JobContext) -> None:
+        video_id = ctx.job.video_id
+        assert video_id is not None
+        models = ModelChoice(**ctx.job.params["models"])
+        with Session(ctx.env.engine) as session:
+            video = session.get_one(Video, video_id)
+            profile = session.get(Profile, video_id)
+            inputs: dict[str, Any] = {}
+            for name in self.analyzer.requires:
+                found = artifacts.find(session, video_id, name, current.params(name, models))
+                if found is None:
+                    raise PermanentJobError(
+                        f"The {name.replace('_', ' ')} for this video is missing; "
+                        "plan the analyzer again to compute it first."
+                    )
+                inputs[name] = found.data
+        actx = analyzers.AnalyzerContext(
+            video=video,
+            profile=profile,
+            artifacts=inputs,
+            models=models,
+            paths=ctx.env.paths,
+            provider_factory=lambda: ctx.env.provider,
+            progress=ctx.progress,
+        )
+        try:
+            result = self.analyzer.run(actx)  # outside any transaction: may take minutes
+        except analyzers.AnalyzerNotReadyError as e:
+            raise PermanentJobError(str(e)) from e
+        with db.session_scope(ctx.env.engine) as session:
+            analyzers.save_result(session, video_id, self.name, result)
+
+
+for _analyzer in analyzers.REGISTRY.values():
+    HANDLERS[_analyzer.name] = AnalyzerHandler(_analyzer)
+
+
+def enqueue_analyzer(
+    env: WorkerEnv, analyzer: analyzers.Analyzer | str, video_ids: Iterable[int]
+) -> list[int]:
+    """Queue an analyzer for these videos with the current models. Each job waits for the
+    artifact jobs of its video that are still queued or running."""
+    if isinstance(analyzer, str):
+        analyzer = analyzers.get(analyzer)
+    handler = AnalyzerHandler(analyzer)
+    with Session(env.engine) as session:
+        models = db.load_settings(session).models()
+    params: dict[str, Any] = {"models": models.model_dump()}
+    needs = list(analyzer.requires)
+    if current.NEEDS_FRAMES.intersection(needs):
+        needs.append(frames.TYPE)
+    wanted = {n: current.params(n, models) for n in needs}
+
+    ids: list[int] = []
+    with db.session_scope(env.engine) as session:
+        for vid in dict.fromkeys(video_ids):
+            active = session.exec(
+                select(Job).where(
+                    Job.video_id == vid,
+                    col(Job.name).in_(list(wanted)),
+                    col(Job.status).in_(queue.ACTIVE),
+                )
+            ).all()
+            after = tuple(j.id for j in active if j.id is not None and j.params == wanted[j.name])
+            job = queue.enqueue(session, spec_for(handler, vid, params, depends_on=after))
+            assert job.id is not None
+            ids.append(job.id)
+    return ids
 
 
 def _enqueue_after_frames(

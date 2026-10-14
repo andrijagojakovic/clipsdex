@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlmodel import Session
 
-from clipsdex_engine import __version__, binaries, config, db, library, llm, net
+from clipsdex_engine import __version__, analyzers, binaries, config, db, library, llm, net
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import JobStatus, SourceType
 from clipsdex_engine.jobs import builtin, estimates, queue
@@ -351,26 +351,37 @@ def plan(
     ] = None,
     category: Annotated[str | None, typer.Option(help="Only videos in this category.")] = None,
     video: Annotated[
-        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+        list[int] | None,
+        typer.Option(
+            "--video",
+            help="Only this video ID (repeatable); runs even where an analyzer would skip it.",
+        ),
     ] = None,
     queue_it: Annotated[bool, typer.Option("--queue", help="Also queue the missing work.")] = False,
 ) -> None:
     """Show what a request would compute and how long it would take on this computer."""
     paths = config.data_paths()
     engine = db.open_database(paths)
-    try:
-        targets = planning.expand_targets(analyzer or [], artifact or [])
-    except ValueError as e:
-        typer.secho(str(e), fg=typer.colors.RED)
-        raise typer.Exit(code=1) from e
-    if not targets:
+    if not (analyzer or artifact):
         typer.secho(
             "Say what to plan: --analyzer brief, or --artifact transcript.", fg=typer.colors.RED
         )
         raise typer.Exit(code=1)
+    try:
+        planning.check_names(analyzer or [], artifact or [])
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
 
-    p = planning.build_plan(engine, targets, category=category, video_ids=video)
-    scope = f'category "{category}"' if category else "the selected videos"
+    p = planning.build_plan(engine, analyzer or [], artifact or [], category, video)
+    if video is not None:
+        scope = "the selected videos"
+    elif category:
+        scope = f'category "{category}"'
+    else:
+        usual = sorted({c for a in analyzer or [] for c in analyzers.get(a).default_categories})
+        every = artifact or any(not analyzers.get(a).default_categories for a in analyzer or [])
+        scope = "all videos" if every or not usual else f"the usual categories ({', '.join(usual)})"
     what = ", ".join([*(analyzer or []), *(artifact or [])])
     typer.echo(f"Plan: {what} for {scope}: {len(p.videos)} video(s)")
     if not p.videos:
@@ -379,9 +390,19 @@ def plan(
     for v in p.videos:
         if v.blocked:
             status = f"can't run: {v.blocked}"
+        elif v.missing:
+            status = "needs " + ", ".join(v.missing)
         else:
-            status = "needs " + ", ".join(v.missing) if v.missing else "ready"
+            status = "ready" if v.analyzers or not v.skipped else "nothing to do"
         typer.echo(f"  #{v.video_id:<4} {v.name[:40]:<40} {status}")
+        for name, reason in v.skipped.items():
+            typer.echo(f"        skips {name}: {reason}")
+    for name in p.not_available:
+        typer.secho(
+            f"\n{analyzers.get(name).title} ({name}) is not available in this version yet; "
+            "only the inputs it reads are planned.",
+            fg=typer.colors.YELLOW,
+        )
 
     if not p.jobs:
         typer.echo("\nEverything needed is already computed.")

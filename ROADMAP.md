@@ -42,7 +42,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 
 ## Phase 4 – Analyzers (on demand)
 
-- [ ] **4.1** Analyzer framework: registry and "does this apply to this video" rules
+- [x] **4.1** Analyzer framework: registry and "does this apply to this video" rules
 - [ ] **4.2** Full categorization that learns from the user's corrections
 - [ ] **4.3** Briefs: notes per video, merged into one Markdown document
 - [ ] **4.4** Movie identification from text, dialogue and scene descriptions (no face recognition), verified against TMDb

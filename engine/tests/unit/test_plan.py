@@ -57,8 +57,8 @@ def env(tmp_path: Path) -> WorkerEnv:
         session.add(Video(id=3, source_id=source.id, file_path="C:/v/3.mp4"))
         session.add_all([Category(id=1, name="business"), Category(id=2, name="edit")])
         session.flush()
-        for vid, cat, duration in ((1, 1, 60.0), (2, 1, 30.0), (3, 2, 20.0)):
-            session.add(Profile(video_id=vid, duration_s=duration))
+        for vid, cat, duration, speech in ((1, 1, 60.0, 0.7), (2, 1, 30.0, 0.7), (3, 2, 20.0, 0.0)):
+            session.add(Profile(video_id=vid, duration_s=duration, speech_ratio=speech))
             session.add(
                 CategoryAssignment(video_id=vid, category_id=cat, assigned_by=AssignedBy.AUTO)
             )
@@ -86,14 +86,16 @@ def finished_job(
     )
 
 
-def test_targets_expand_and_unknown_names_fail() -> None:
-    assert planning.expand_targets(["brief"], ["frames"]) == ("transcript", "ocr", "frames")
-    with pytest.raises(ValueError, match="Unknown analyzer"):
-        planning.expand_targets(["teleport"], [])
+def test_unknown_names_fail_with_the_known_ones() -> None:
+    planning.check_names(["brief"], ["frames"])
+    with pytest.raises(ValueError, match=r"Unknown analyzer 'teleport'\. Known: .*song_id"):
+        planning.check_names(["teleport"], [])
+    with pytest.raises(ValueError, match="Unknown artifact"):
+        planning.check_names([], ["vibes"])
 
 
 def test_brief_for_business_lists_missing_and_blocked(env: WorkerEnv) -> None:
-    plan = planning.build_plan(env.engine, ("transcript", "ocr"), category="business")
+    plan = planning.build_plan(env.engine, ["brief"], category="business")
     by_id = {v.video_id: v for v in plan.videos}
     assert set(by_id) == {1, 2}
     assert by_id[1].missing == ["frames", "ocr"] and by_id[1].blocked is None
@@ -104,7 +106,7 @@ def test_brief_for_business_lists_missing_and_blocked(env: WorkerEnv) -> None:
 
 
 def test_default_estimates_use_duration_and_frame_counts(env: WorkerEnv) -> None:
-    plan = planning.build_plan(env.engine, ("ocr", "transcript"), video_ids=[3])
+    plan = planning.build_plan(env.engine, artifact_names=["ocr", "transcript"], video_ids=[3])
     jobs = {j.name: j for j in plan.jobs}
     assert jobs["transcript"].seconds == pytest.approx(20 * estimates.DEFAULT_RATES["transcript"])
     assert jobs["ocr"].seconds == pytest.approx(3 * estimates.DEFAULT_RATES["ocr"])  # 3 frames
@@ -123,7 +125,7 @@ def test_this_machines_history_wins_and_ignores_one_outlier(env: WorkerEnv) -> N
         r = estimates.rate(session, "transcript", "whisper:small", 4)
     assert r.measured_jobs == 4
     assert r.seconds_per_unit == pytest.approx(0.2)  # the median ignores the stuck job
-    plan = planning.build_plan(env.engine, ("transcript",), video_ids=[3])
+    plan = planning.build_plan(env.engine, artifact_names=["transcript"], video_ids=[3])
     assert plan.jobs[0].measured_jobs == 4
 
 
@@ -135,7 +137,7 @@ def test_too_little_history_falls_back_to_defaults(env: WorkerEnv) -> None:
 
 
 def test_queue_plan_queues_missing_work_once(env: WorkerEnv) -> None:
-    plan = planning.build_plan(env.engine, ("transcript", "ocr"), category="business")
+    plan = planning.build_plan(env.engine, ["brief"], category="business")
     ids = planning.queue_plan(env, plan)
     with Session(env.engine) as session:
         names = sorted(session.get_one(Job, i).name for i in ids)
@@ -172,5 +174,5 @@ def test_ready_when_everything_exists(env: WorkerEnv) -> None:
     with db.session_scope(env.engine) as session:
         add_artifact(session, 1, "frames", frames.params_for(4), {"frames": [{"t": 1}]})
         add_artifact(session, 1, "ocr", ocr.params_for(4), {"text": ""})
-    plan = planning.build_plan(env.engine, ("transcript", "ocr"), video_ids=[1])
+    plan = planning.build_plan(env.engine, ["brief"], video_ids=[1])
     assert plan.videos[0].missing == [] and plan.jobs == []
