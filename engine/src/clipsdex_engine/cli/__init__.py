@@ -15,7 +15,8 @@ from sqlmodel import Session
 from clipsdex_engine import __version__, binaries, config, db, library, llm, net
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import JobStatus, SourceType
-from clipsdex_engine.jobs import builtin, queue
+from clipsdex_engine.jobs import builtin, estimates, queue
+from clipsdex_engine.jobs import plan as planning
 from clipsdex_engine.jobs.handlers import WorkerEnv
 from clipsdex_engine.jobs.worker import Worker, WorkerBusyError
 from clipsdex_engine.sources import manual
@@ -336,6 +337,72 @@ def describe(
     env = WorkerEnv(db.open_database(paths), paths)
     ids = builtin.enqueue_frame_descriptions(env, video_ids=video, redo=redo)
     typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+
+
+@app.command()
+def plan(
+    analyzer: Annotated[
+        list[str] | None,
+        typer.Option(help="What you want to run, e.g. brief, categorize, movie_id (repeatable)."),
+    ] = None,
+    artifact: Annotated[
+        list[str] | None,
+        typer.Option(help="Or name artifacts directly: transcript, frames, ocr, …"),
+    ] = None,
+    category: Annotated[str | None, typer.Option(help="Only videos in this category.")] = None,
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    queue_it: Annotated[bool, typer.Option("--queue", help="Also queue the missing work.")] = False,
+) -> None:
+    """Show what a request would compute and how long it would take on this computer."""
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    try:
+        targets = planning.expand_targets(analyzer or [], artifact or [])
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    if not targets:
+        typer.secho(
+            "Say what to plan: --analyzer brief, or --artifact transcript.", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
+
+    p = planning.build_plan(engine, targets, category=category, video_ids=video)
+    scope = f'category "{category}"' if category else "the selected videos"
+    what = ", ".join([*(analyzer or []), *(artifact or [])])
+    typer.echo(f"Plan: {what} for {scope}: {len(p.videos)} video(s)")
+    if not p.videos:
+        typer.echo("No videos match.")
+        return
+    for v in p.videos:
+        if v.blocked:
+            status = f"can't run: {v.blocked}"
+        else:
+            status = "needs " + ", ".join(v.missing) if v.missing else "ready"
+        typer.echo(f"  #{v.video_id:<4} {v.name[:40]:<40} {status}")
+
+    if not p.jobs:
+        typer.echo("\nEverything needed is already computed.")
+        return
+    typer.echo("")
+    for j in p.jobs:
+        basis = (
+            f"based on {j.measured_jobs} job(s) on this computer"
+            if j.measured_jobs
+            else "default estimate"
+        )
+        typer.echo(
+            f"  {j.name:<19} {j.videos:>3} video(s)  {estimates.humanize(j.seconds):>9}  ({basis})"
+        )
+    if p.load_seconds:
+        typer.echo(f"  {'loading models':<19} {'':>12}  {estimates.humanize(p.load_seconds):>9}")
+    typer.echo(f"\nTotal: {estimates.humanize(p.total_seconds)}")
+
+    if queue_it:
+        ids = planning.queue_plan(WorkerEnv(engine, paths), p)
+        typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
 
 
 @app.command()
