@@ -263,7 +263,7 @@ class AnalyzerHandler:
         video_id = ctx.job.video_id
         assert video_id is not None
         models = ModelChoice(**ctx.job.params["models"])
-        with Session(ctx.env.engine) as session:
+        with db.session_scope(ctx.env.engine) as session:  # prepare() may add defaults
             video = session.get_one(Video, video_id)
             profile = session.get(Profile, video_id)
             inputs: dict[str, Any] = {}
@@ -275,6 +275,11 @@ class AnalyzerHandler:
                         "plan the analyzer again to compute it first."
                     )
                 inputs[name] = found.data
+            prepared = self.analyzer.prepare(session, video_id)
+            # Keep them readable after the commit; the run uses them outside the session.
+            session.expunge(video)
+            if profile is not None:
+                session.expunge(profile)
         actx = analyzers.AnalyzerContext(
             video=video,
             profile=profile,
@@ -283,13 +288,14 @@ class AnalyzerHandler:
             paths=ctx.env.paths,
             provider_factory=lambda: ctx.env.provider,
             progress=ctx.progress,
+            prepared=prepared,
         )
         try:
             result = self.analyzer.run(actx)  # outside any transaction: may take minutes
         except analyzers.AnalyzerNotReadyError as e:
             raise PermanentJobError(str(e)) from e
         with db.session_scope(ctx.env.engine) as session:
-            analyzers.save_result(session, video_id, self.name, result)
+            self.analyzer.save(session, video_id, result)
 
 
 for _analyzer in analyzers.REGISTRY.values():

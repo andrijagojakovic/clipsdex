@@ -52,6 +52,7 @@ class AnalyzerContext:
     paths: DataPaths
     provider_factory: Callable[[], LLMProvider]
     progress: Callable[[float], None] = field(default=_no_progress)
+    prepared: Any = None  # whatever ``Analyzer.prepare`` read from the database
 
     @property
     def provider(self) -> LLMProvider:
@@ -74,8 +75,17 @@ class Analyzer:
     def is_applicable(self, video: Video, profile: Profile | None) -> Applicability:
         return Applicability(True, "applies to every video")
 
+    def prepare(self, session: Session, video_id: int) -> Any:
+        """Read what the run needs from the database besides artifacts (e.g. the user's
+        categories). Runs before ``run``, in a short transaction of its own."""
+        return None
+
     def run(self, ctx: AnalyzerContext) -> AnalyzerResult:
         raise AnalyzerNotReadyError(f"{self.title} is not available in this version yet.")
+
+    def save(self, session: Session, video_id: int, result: AnalyzerResult) -> None:
+        """Store the result. Override to also update other tables."""
+        save_result(session, video_id, self.name, result)
 
 
 def not_profiled() -> Applicability:
