@@ -12,6 +12,7 @@ from clipsdex_engine.llm.base import (
     ChatResult,
     Health,
     LLMError,
+    LLMOutputError,
     Message,
     ModelMissingError,
     ProviderUnavailableError,
@@ -59,6 +60,9 @@ class OllamaProvider:
             )
         if response.is_error:
             detail = _error_detail(response)
+            if "repeat limit" in detail:
+                # The model got stuck repeating itself: a bad answer, worth another try.
+                raise LLMOutputError("The model got stuck repeating itself.")
             raise LLMError(f"Ollama returned an error ({response.status_code}): {detail}")
         return response.json()
 
@@ -83,12 +87,16 @@ class OllamaProvider:
         json_schema: dict[str, Any] | None = None,
         temperature: float = 0.0,
         keep_alive: str | int | None = None,
+        max_tokens: int | None = None,
     ) -> ChatResult:
+        options: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
         body: dict[str, Any] = {
             "model": model,
             "messages": [_message_json(m) for m in messages],
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": options,
         }
         if json_schema is not None:
             body["format"] = json_schema

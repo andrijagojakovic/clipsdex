@@ -10,7 +10,8 @@ from typing import Any
 from clipsdex_engine.llm import ChatResult, Health, Message, ModelMissingError
 from clipsdex_engine.llm.base import ProviderUnavailableError, same_model
 
-Reply = str | Callable[[list[Message]], str]
+# A reply text, a function of the messages, or an exception to raise (e.g. LLMOutputError).
+Reply = str | Callable[[list[Message]], str] | Exception
 
 
 @dataclass
@@ -19,11 +20,13 @@ class ChatCall:
     messages: list[Message]
     json_schema: dict[str, Any] | None
     keep_alive: str | int | None
+    temperature: float = 0.0
+    max_tokens: int | None = None
 
 
 @dataclass
 class FakeLLM:
-    """Replies come from ``replies`` in order (a string, or a function of the messages);
+    """Replies come from ``replies`` in order (see ``Reply``);
     when they run out, ``default_reply`` is used."""
 
     replies: list[Reply] = field(default_factory=list)
@@ -61,10 +64,15 @@ class FakeLLM:
         json_schema: dict[str, Any] | None = None,
         temperature: float = 0.0,
         keep_alive: str | int | None = None,
+        max_tokens: int | None = None,
     ) -> ChatResult:
         self._check(model)
-        self.calls.append(ChatCall(model, list(messages), json_schema, keep_alive))
+        self.calls.append(
+            ChatCall(model, list(messages), json_schema, keep_alive, temperature, max_tokens)
+        )
         reply = self.replies.pop(0) if self.replies else self.default_reply
+        if isinstance(reply, Exception):
+            raise reply
         text = reply(messages) if callable(reply) else reply
         return ChatResult(text=text, model=model, seconds=0.0)
 

@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
-from clipsdex_engine.llm import Message, ModelMissingError, ProviderUnavailableError
+from clipsdex_engine.llm import LLMOutputError, Message, ModelMissingError, ProviderUnavailableError
 from clipsdex_engine.llm.base import LLMError, same_model
 from clipsdex_engine.llm.ollama import OllamaProvider
 
@@ -125,3 +125,14 @@ def test_load_and_unload_use_keep_alive() -> None:
 )
 def test_same_model(a: str, b: str, same: bool) -> None:
     assert same_model(a, b) is same
+
+
+def test_repeat_limit_is_an_output_problem_and_max_tokens_is_sent() -> None:
+    p, seen = provider(
+        lambda _r: httpx.Response(
+            500, json={"error": "prediction aborted, token repeat limit reached"}
+        )
+    )
+    with pytest.raises(LLMOutputError, match="stuck repeating"):
+        p.chat("gemma3:4b", [Message("user", "hi")], max_tokens=120)
+    assert body(seen[0])["options"] == {"temperature": 0.0, "num_predict": 120}

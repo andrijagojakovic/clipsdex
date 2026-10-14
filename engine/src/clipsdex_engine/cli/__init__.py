@@ -205,6 +205,13 @@ def show(video_id: Annotated[int, typer.Argument(help="Video ID from `clipsdex l
                 )
                 if a.path:
                     typer.echo(f"  {config.data_dir() / a.path}")
+            if a.type == "frame_descriptions" and isinstance(a.data, dict):
+                typer.echo(f"\nFrame descriptions ({a.data.get('model')}):")
+                for f in a.data.get("frames", []):
+                    if "error" in f:
+                        typer.echo(f"  {f['t']:.1f}s  could not describe: {f['error']}")
+                    else:
+                        typer.echo(f"  {f['t']:.1f}s  [{f['shot_type']}] {f['description']}")
             if a.type == "ocr" and isinstance(a.data, dict):
                 lines = a.data.get("lines", [])
                 typer.echo(f"\nOn-screen text ({len(lines)} unique line(s)):")
@@ -314,6 +321,20 @@ def ocr_cmd(
     paths = config.data_paths()
     env = WorkerEnv(db.open_database(paths), paths)
     ids = builtin.enqueue_ocr(env, video_ids=video, redo=redo)
+    typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+
+
+@app.command()
+def describe(
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    redo: Annotated[bool, typer.Option(help="Describe the frames again.")] = False,
+) -> None:
+    """Queue short descriptions of the key frames by the local vision model."""
+    paths = config.data_paths()
+    env = WorkerEnv(db.open_database(paths), paths)
+    ids = builtin.enqueue_frame_descriptions(env, video_ids=video, redo=redo)
     typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
 
 

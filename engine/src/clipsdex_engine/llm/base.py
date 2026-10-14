@@ -68,8 +68,10 @@ class LLMProvider(Protocol):
         json_schema: dict[str, Any] | None = None,
         temperature: float = 0.0,
         keep_alive: str | int | None = None,
+        max_tokens: int | None = None,
     ) -> ChatResult:
-        """One non-streaming reply. With ``json_schema`` the reply must be JSON matching it."""
+        """One non-streaming reply. With ``json_schema`` the reply must be JSON matching it.
+        ``max_tokens`` caps the answer length (a stuck model then stops quickly)."""
         ...
 
     def embed(self, model: str, texts: list[str]) -> list[list[float]]: ...

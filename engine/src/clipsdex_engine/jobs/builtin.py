@@ -13,7 +13,7 @@ from sqlmodel import Session, col, select
 
 from clipsdex_engine import artifacts, db
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.artifacts import frames, ocr, transcript
+from clipsdex_engine.artifacts import frame_desc, frames, ocr, transcript
 from clipsdex_engine.db.models import Artifact, JobKind, Video
 from clipsdex_engine.jobs import queue
 from clipsdex_engine.jobs.handlers import (
@@ -198,23 +198,57 @@ class OcrHandler:
             raise PermanentJobError(str(e)) from e
 
 
+class FrameDescriptionsHandler:
+    name = frame_desc.TYPE
+    kind = JobKind.ARTIFACT
+
+    def resource_key(self, video_id: int | None, params: dict[str, Any]) -> str:
+        # Same key as other jobs on this model: in the Balanced preset the text and vision
+        # model are both gemma3:4b, so guesses and descriptions share one load.
+        return f"ollama:{params['model']}"
+
+    def make_resource(self, env: WorkerEnv, key: str) -> Resource:
+        return OllamaResource(key, env, model=key.removeprefix("ollama:"))
+
+    def run(self, ctx: JobContext) -> None:
+        assert ctx.job.video_id is not None
+        try:
+            frame_desc.build_descriptions(
+                ctx.env.engine,
+                ctx.env.paths,
+                ctx.job.video_id,
+                ctx.job.params["frames"]["budget"],
+                ctx.env.provider,
+                ctx.job.params["model"],
+                progress=ctx.progress,
+            )
+        except frame_desc.NoFramesError as e:
+            raise PermanentJobError(str(e)) from e
+
+
 PROFILE = ProfileHandler()
 CATEGORY_GUESS = CategoryGuessHandler()
 TRANSCRIPT = TranscriptHandler()
 FRAMES = FramesHandler()
 OCR = OcrHandler()
+FRAME_DESCRIPTIONS = FrameDescriptionsHandler()
 HANDLERS: dict[str, Handler] = {
-    h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES, OCR)
+    h.name: h for h in (PROFILE, CATEGORY_GUESS, TRANSCRIPT, FRAMES, OCR, FRAME_DESCRIPTIONS)
 }
 
 
-def enqueue_ocr(
-    env: WorkerEnv, video_ids: Iterable[int] | None = None, redo: bool = False
+def _enqueue_after_frames(
+    env: WorkerEnv,
+    handler: Handler,
+    params_for: Callable[[int], dict[str, Any]],
+    video_ids: Iterable[int] | None,
+    redo: bool,
 ) -> list[int]:
-    """Queue OCR over the key frames; queues frame selection first where it is missing."""
+    """Queue ``handler`` for videos that lack its artifact, after frame selection where the
+    frames are missing too."""
     with Session(env.engine) as session:
         budget = db.load_settings(session).models().max_frames
-        frames_params, ocr_params = frames.params_for(budget), ocr.params_for(budget)
+        frames_params, params = frames.params_for(budget), params_for(budget)
         query = select(Video)
         if video_ids is not None:
             query = query.where(col(Video.id).in_(list(video_ids)))
@@ -222,7 +256,7 @@ def enqueue_ocr(
         for v in session.exec(query.order_by(col(Video.id))):
             if v.id is None:
                 continue
-            if not redo and artifacts.find(session, v.id, ocr.TYPE, ocr_params) is not None:
+            if not redo and artifacts.find(session, v.id, handler.name, params) is not None:
                 continue
             has_frames = artifacts.find(session, v.id, frames.TYPE, frames_params) is not None
             has_file = v.file_path is not None and not v.file_deleted
@@ -238,10 +272,32 @@ def enqueue_ocr(
                 assert frames_job.id is not None
                 ids.append(frames_job.id)
                 after = (frames_job.id,)
-            job = queue.enqueue(session, spec_for(OCR, vid, ocr_params, depends_on=after))
+            job = queue.enqueue(session, spec_for(handler, vid, params, depends_on=after))
             assert job.id is not None
             ids.append(job.id)
     return ids
+
+
+def enqueue_frame_descriptions(
+    env: WorkerEnv, video_ids: Iterable[int] | None = None, redo: bool = False
+) -> list[int]:
+    """Queue vision-model descriptions of the key frames (preset's vision model)."""
+    with Session(env.engine) as session:
+        model = db.load_settings(session).models().vision
+    return _enqueue_after_frames(
+        env,
+        FRAME_DESCRIPTIONS,
+        lambda budget: frame_desc.params_for(model, budget),
+        video_ids,
+        redo,
+    )
+
+
+def enqueue_ocr(
+    env: WorkerEnv, video_ids: Iterable[int] | None = None, redo: bool = False
+) -> list[int]:
+    """Queue OCR over the key frames; queues frame selection first where it is missing."""
+    return _enqueue_after_frames(env, OCR, ocr.params_for, video_ids, redo)
 
 
 def enqueue_frames(

@@ -49,3 +49,17 @@ def test_fake_llm_reply_functions_and_events() -> None:
     fake.load("gemma3:4b")
     fake.unload("gemma3:4b")
     assert fake.events == ["load gemma3:4b", "unload gemma3:4b"]
+
+
+def test_stuck_model_is_retried_with_some_randomness() -> None:
+    fake = FakeLLM(
+        replies=[
+            LLMOutputError("The model got stuck repeating itself."),
+            '{"category": "business", "confidence": 0.6}',
+        ]
+    )
+    guess = ask_structured(fake, "gemma3:4b", MESSAGES, Guess, max_tokens=50)
+    assert guess.category == "business"
+    assert [c.temperature for c in fake.calls] == [0.0, 0.3]
+    assert [c.max_tokens for c in fake.calls] == [50, 50]
+    assert fake.calls[1].messages == MESSAGES  # nothing to correct: just ask again

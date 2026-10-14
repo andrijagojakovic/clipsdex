@@ -37,7 +37,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 - [x] **3.3** Transcripts with timestamps and language detection (faster-whisper, CPU)
 - [x] **3.4** Key frame selection: scene changes, near-duplicate removal, per-preset frame budget
 - [x] **3.5** Full on-screen text extraction over the selected frames
-- [ ] **3.6** Short factual frame descriptions with a local vision model
+- [x] **3.6** Short factual frame descriptions with a local vision model
 - [ ] **3.7** Time estimates before a run (`clipsdex plan`)
 
 ## Phase 4 – Analyzers (on demand)
