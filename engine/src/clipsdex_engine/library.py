@@ -77,6 +77,19 @@ def current_assignment(
     return None if row is None else (row[0], row[1])
 
 
+def current_result(session: Session, video_id: int, analyzer: str) -> Result | None:
+    """The analyzer's latest result for the video (older ones are marked superseded)."""
+    return session.exec(
+        select(Result)
+        .where(
+            Result.video_id == video_id,
+            Result.analyzer == analyzer,
+            col(Result.superseded).is_(False),
+        )
+        .order_by(col(Result.id).desc())
+    ).first()
+
+
 def current_category(
     session: Session, video_id: int
 ) -> tuple[Category, AssignedBy] | tuple[None, None]:

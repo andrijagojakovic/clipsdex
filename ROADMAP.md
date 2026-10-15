@@ -49,7 +49,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 - [ ] **4.5** Song identification: caption / on-screen text, then audio fingerprint (AcoustID)
 - [ ] **4.6** Song identification for sped-up and slowed edits (tempo / pitch variants)
 - [ ] **4.7** Song identification from sung lyrics (vocal separation → transcript → LRCLIB)
-- [ ] **4.8** `clipsdex run` for an analyzer on a category, a selection or one video
+- [x] **4.8** `clipsdex run` for an analyzer on a category, a selection or one video
 
 ## Phase 5 – Search, corrections, export
 

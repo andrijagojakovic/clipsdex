@@ -23,7 +23,7 @@ from clipsdex_engine import artifacts, db, library
 from clipsdex_engine.analyzers import Analyzer
 from clipsdex_engine.artifacts import audio, current, frames, transcript
 from clipsdex_engine.config import ModelChoice
-from clipsdex_engine.db.models import Profile, Result, Video
+from clipsdex_engine.db.models import Profile, Video
 from clipsdex_engine.jobs import builtin, estimates
 from clipsdex_engine.jobs.handlers import WorkerEnv
 
@@ -120,16 +120,7 @@ def _category(session: Session, video: Video) -> str | None:
 
 
 def _has_result(session: Session, video_id: int, analyzer: str) -> bool:
-    return (
-        session.exec(
-            select(Result.id).where(
-                Result.video_id == video_id,
-                Result.analyzer == analyzer,
-                col(Result.superseded).is_(False),
-            )
-        ).first()
-        is not None
-    )
+    return library.current_result(session, video_id, analyzer) is not None
 
 
 def _in_scope(analyzer: Analyzer, video_category: str | None) -> bool:

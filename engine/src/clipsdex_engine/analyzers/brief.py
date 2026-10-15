@@ -19,7 +19,7 @@ from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlmodel import Session, col, select
+from sqlmodel import Session
 
 from clipsdex_engine import library, llm
 from clipsdex_engine.analyzers.base import (
@@ -31,7 +31,7 @@ from clipsdex_engine.analyzers.base import (
     pct,
 )
 from clipsdex_engine.config import ModelChoice
-from clipsdex_engine.db.models import Profile, Result, Video
+from clipsdex_engine.db.models import Profile, Video
 from clipsdex_engine.llm import LLMProvider, Message
 
 NAME = "brief"
@@ -332,11 +332,7 @@ def collect_sources(session: Session, videos: Sequence[Video]) -> tuple[list[Sou
     missing: list[int] = []
     for v in videos:
         assert v.id is not None
-        result = session.exec(
-            select(Result)
-            .where(Result.video_id == v.id, Result.analyzer == NAME)
-            .where(col(Result.superseded).is_(False))
-        ).first()
+        result = library.current_result(session, v.id, NAME)
         if result is None or not isinstance(result.value, dict):
             missing.append(v.id)
             continue

@@ -343,53 +343,24 @@ def describe(
     typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
 
 
-@app.command()
-def plan(
-    analyzer: Annotated[
-        list[str] | None,
-        typer.Option(help="What you want to run, e.g. brief, categorize, movie_id (repeatable)."),
-    ] = None,
-    artifact: Annotated[
-        list[str] | None,
-        typer.Option(help="Or name artifacts directly: transcript, frames, ocr, …"),
-    ] = None,
-    category: Annotated[str | None, typer.Option(help="Only videos in this category.")] = None,
-    video: Annotated[
-        list[int] | None,
-        typer.Option(
-            "--video",
-            help="Only this video ID (repeatable); runs even where an analyzer would skip it.",
-        ),
-    ] = None,
-    queue_it: Annotated[bool, typer.Option("--queue", help="Also queue the missing work.")] = False,
-    redo: Annotated[
-        bool, typer.Option(help="Run analyzers again where they already have a result.")
-    ] = False,
+def _print_plan(
+    p: planning.Plan,
+    analyzer_names: list[str],
+    artifact_names: list[str],
+    category: str | None,
+    video: list[int] | None,
 ) -> None:
-    """Show what a request would compute and how long it would take on this computer."""
-    paths = config.data_paths()
-    engine = db.open_database(paths)
-    if not (analyzer or artifact):
-        typer.secho(
-            "Say what to plan: --analyzer brief, or --artifact transcript.", fg=typer.colors.RED
-        )
-        raise typer.Exit(code=1)
-    try:
-        planning.check_names(analyzer or [], artifact or [])
-    except ValueError as e:
-        typer.secho(str(e), fg=typer.colors.RED)
-        raise typer.Exit(code=1) from e
-
-    p = planning.build_plan(engine, analyzer or [], artifact or [], category, video, redo=redo)
     if video is not None:
         scope = "the selected videos"
     elif category:
         scope = f'category "{category}"'
     else:
-        usual = sorted({c for a in analyzer or [] for c in analyzers.get(a).default_categories})
-        every = artifact or any(not analyzers.get(a).default_categories for a in analyzer or [])
+        usual = sorted({c for a in analyzer_names for c in analyzers.get(a).default_categories})
+        every = artifact_names or any(
+            not analyzers.get(a).default_categories for a in analyzer_names
+        )
         scope = "all videos" if every or not usual else f"the usual categories ({', '.join(usual)})"
-    what = ", ".join([*(analyzer or []), *(artifact or [])])
+    what = ", ".join([*analyzer_names, *artifact_names])
     typer.echo(f"Plan: {what} for {scope}: {len(p.videos)} video(s)")
     if not p.videos:
         typer.echo("No videos match.")
@@ -430,9 +401,147 @@ def plan(
         typer.echo(f"  {'loading models':<19} {'':>12}  {estimates.humanize(p.load_seconds):>9}")
     typer.echo(f"\nTotal: {estimates.humanize(p.total_seconds)}")
 
+
+@app.command()
+def plan(
+    analyzer: Annotated[
+        list[str] | None,
+        typer.Option(help="What you want to run, e.g. brief, categorize, movie_id (repeatable)."),
+    ] = None,
+    artifact: Annotated[
+        list[str] | None,
+        typer.Option(help="Or name artifacts directly: transcript, frames, ocr, …"),
+    ] = None,
+    category: Annotated[str | None, typer.Option(help="Only videos in this category.")] = None,
+    video: Annotated[
+        list[int] | None,
+        typer.Option(
+            "--video",
+            help="Only this video ID (repeatable); runs even where an analyzer would skip it.",
+        ),
+    ] = None,
+    queue_it: Annotated[bool, typer.Option("--queue", help="Also queue the missing work.")] = False,
+    redo: Annotated[
+        bool, typer.Option(help="Run analyzers again where they already have a result.")
+    ] = False,
+) -> None:
+    """Show what a request would compute and how long it would take on this computer."""
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    if not (analyzer or artifact):
+        typer.secho(
+            "Say what to plan: --analyzer brief, or --artifact transcript.", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
+    try:
+        planning.check_names(analyzer or [], artifact or [])
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+    p = planning.build_plan(engine, analyzer or [], artifact or [], category, video, redo=redo)
+    _print_plan(p, analyzer or [], artifact or [], category, video)
+    if not p.jobs:
+        return
+
     if queue_it:
         ids = planning.queue_plan(WorkerEnv(engine, paths), p)
         typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+
+
+def _result_summary(analyzer: str, value: object) -> str:
+    """One readable line for a result value."""
+    if isinstance(value, dict):
+        if analyzer == "categorize":
+            tags = ", ".join(value.get("tags", []))
+            return f"{value.get('category')}: {value.get('summary')}" + (
+                f" [{tags}]" if tags else ""
+            )
+        if analyzer == "brief":
+            if not value.get("has_advice", True):
+                return "no advice found"
+            return str(value.get("main_message"))
+    return json.dumps(value, ensure_ascii=False)
+
+
+@app.command()
+def run(
+    analyzer: Annotated[
+        list[str],
+        typer.Option(help="What to run: categorize, brief, movie_id, song_id (repeatable)."),
+    ],
+    category: Annotated[
+        str | None,
+        typer.Option(help="Only videos in this category (default: the analyzer's usual ones)."),
+    ] = None,
+    video: Annotated[
+        list[int] | None,
+        typer.Option(
+            "--video",
+            help="Only this video ID (repeatable); runs even where an analyzer would skip it.",
+        ),
+    ] = None,
+    redo: Annotated[
+        bool, typer.Option(help="Run again where the analyzer already has a result.")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask before starting.")] = False,
+    wait: Annotated[
+        bool, typer.Option(help="Do the work now (--no-wait only queues it for a worker).")
+    ] = True,
+) -> None:
+    """Run analyzers: shows the plan and time estimate, asks, then does the work."""
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    try:
+        planning.check_names(analyzer, [])
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    unavailable = [a for a in analyzer if not analyzers.get(a).available]
+    if unavailable:
+        names = ", ".join(f"{analyzers.get(a).title} ({a})" for a in unavailable)
+        typer.secho(f"Not available in this version yet: {names}.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    p = planning.build_plan(engine, analyzer, [], category, video, redo=redo)
+    _print_plan(p, analyzer, [], category, video)
+    if not p.jobs:
+        return
+    if not yes and not typer.confirm("\nStart?", default=True):
+        typer.echo("Nothing was started.")
+        return
+
+    env = WorkerEnv(engine, paths, download_progress=_download_printer())
+    ids = planning.queue_plan(env, p)
+    if not wait:
+        typer.echo(f"Queued {len(ids)} job(s). Run them with: clipsdex worker")
+        return
+    typer.echo(f"Queued {len(ids)} job(s). Working (Ctrl+C stops; the rest stays queued):")
+    w = Worker(env, builtin.HANDLERS, on_event=lambda e: typer.echo(f"  {e}"))
+    try:
+        report = w.run(until_idle=True)
+    except WorkerBusyError:
+        typer.echo("Another worker is already running; it will do these jobs.")
+        return
+    except KeyboardInterrupt:
+        typer.echo("\nStopped. Unfinished jobs stay queued: clipsdex worker continues them.")
+        raise typer.Exit(code=130) from None
+    for job_id, reason in report.failed:
+        typer.secho(f"[FAILED]  job {job_id}: {reason}", fg=typer.colors.RED)
+
+    typer.echo("\nResults:")
+    with Session(engine) as session:
+        for v in p.videos:
+            for name in v.analyzers:
+                result = library.current_result(session, v.video_id, name)
+                if result is None:
+                    typer.echo(f"  #{v.video_id:<4} {name}: no result (see the errors above)")
+                    continue
+                conf = f"{result.confidence:.0%}" if result.confidence is not None else "-"
+                summary = _result_summary(name, result.value)
+                typer.echo(f"  #{v.video_id:<4} {name} ({conf}): {summary}")
+    if report.failed:
+        raise typer.Exit(code=1)
 
 
 @app.command("brief")
