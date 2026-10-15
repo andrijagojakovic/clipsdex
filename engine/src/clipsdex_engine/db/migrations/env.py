@@ -12,7 +12,7 @@ from sqlalchemy import Connection
 from sqlmodel import SQLModel
 
 from clipsdex_engine.config import data_paths
-from clipsdex_engine.db import create_db_engine
+from clipsdex_engine.db import create_db_engine, include_name
 from clipsdex_engine.db import models as _models  # noqa: F401  (registers the tables)
 
 config = context.config
@@ -25,6 +25,7 @@ def run_with_connection(connection: Connection) -> None:
         target_metadata=target_metadata,
         render_as_batch=True,  # SQLite can only alter tables by copying them
         compare_type=True,
+        include_name=include_name,
     )
     with context.begin_transaction():
         context.run_migrations()

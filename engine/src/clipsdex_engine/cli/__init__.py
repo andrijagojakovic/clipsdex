@@ -5,16 +5,17 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy import Engine
 from sqlmodel import Session
 
-from clipsdex_engine import __version__, analyzers, binaries, config, db, library, llm, net
+from clipsdex_engine import __version__, analyzers, binaries, config, db, library, llm, net, search
 from clipsdex_engine import profile as quick_profile
 from clipsdex_engine.db.models import JobStatus, SourceType
 from clipsdex_engine.jobs import builtin, estimates, queue
@@ -542,6 +543,91 @@ def run(
                 typer.echo(f"  #{v.video_id:<4} {name} ({conf}): {summary}")
     if report.failed:
         raise typer.Exit(code=1)
+
+
+def _embedding_setup() -> tuple[config.DataPaths, Engine, llm.LLMProvider, str]:
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    with Session(engine) as session:
+        model = db.load_settings(session).models().embedding
+    return paths, engine, llm.default_provider(), model
+
+
+def _index(engine: Engine, provider: llm.LLMProvider, model: str, quiet: bool = False) -> None:
+
+    def show(done: int, total: int) -> None:
+        typer.echo(f"\r  indexing {done}/{total}", nl=done == total)
+
+    report = search.update_index(engine, provider, model, progress=show)
+    if not quiet or report.embedded:
+        typer.echo(
+            f"Index: {report.embedded} updated, {report.unchanged} unchanged"
+            + (f", {report.empty} with nothing to index yet" if report.empty else "")
+        )
+
+
+@app.command()
+def index() -> None:
+    """Update the search index for videos that are new or have new results."""
+    _paths, engine, provider, model = _embedding_setup()
+    try:
+        _index(engine, provider, model)
+    except llm.LLMError as e:
+        typer.secho(f"Could not index: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+
+def _day(value: str | None, option: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError as e:
+        typer.secho(f"{option} needs a date like 2026-10-01.", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+
+@app.command("search")
+def search_cmd(
+    query: Annotated[str, typer.Argument(help='What the video is about, e.g. "negotiating".')],
+    category: Annotated[str | None, typer.Option(help="Only this category.")] = None,
+    author: Annotated[str | None, typer.Option(help="Only this author.")] = None,
+    source: Annotated[SourceType | None, typer.Option(help="Only this source.")] = None,
+    since: Annotated[str | None, typer.Option(help="Saved on or after (YYYY-MM-DD).")] = None,
+    until: Annotated[str | None, typer.Option(help="Saved before (YYYY-MM-DD).")] = None,
+    limit: Annotated[int, typer.Option(min=1, max=100, help="How many results.")] = 10,
+    update: Annotated[
+        bool, typer.Option(help="Index new and changed videos first (--no-update skips it).")
+    ] = True,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+) -> None:
+    """Find videos by meaning, not exact words."""
+
+    filters = search.SearchFilter(
+        category=category,
+        author=author,
+        source_type=source,
+        since=_day(since, "--since"),
+        until=_day(until, "--until"),
+    )
+    _paths, engine, provider, model = _embedding_setup()
+    try:
+        if update:
+            _index(engine, provider, model, quiet=True)
+        hits = search.search(engine, provider, model, query, filters, limit)
+    except llm.LLMError as e:
+        typer.secho(f"Search needs the embedding model ({model}): {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    if as_json:
+        typer.echo(json.dumps([vars(h) for h in hits], ensure_ascii=False, indent=2))
+        return
+    if not hits:
+        typer.echo("Nothing found. Videos are searchable once they have been profiled.")
+        return
+    for h in hits:
+        typer.echo(f"  {h.score:.2f}  #{h.video_id:<4} {h.name[:40]:<40} {h.category or '-'}")
+        if h.snippet:
+            typer.echo(f"        {h.snippet}")
 
 
 @app.command("brief")

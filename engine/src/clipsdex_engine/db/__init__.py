@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import sqlite_vec
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -18,6 +19,14 @@ from clipsdex_engine.config import DataPaths, Settings, data_paths
 from clipsdex_engine.db.models import SettingRow
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# sqlite-vec table of search vectors. Created at run time with the embedding model's size,
+# so migrations and the schema check leave it (and its helper tables) alone.
+VEC_TABLE = "video_embeddings"
+
+
+def include_name(name: str | None, type_: str, _parent_names: Any) -> bool:
+    """For Alembic: compare every table except the sqlite-vec ones."""
+    return not (type_ == "table" and name is not None and name.startswith(VEC_TABLE))
 
 
 def _sqlite_url(db_path: Path) -> str:
@@ -25,6 +34,10 @@ def _sqlite_url(db_path: Path) -> str:
 
 
 def _on_connect(dbapi_connection: Any, _record: Any) -> None:
+    # The vector search functions must exist on every connection.
+    dbapi_connection.enable_load_extension(True)
+    sqlite_vec.load(dbapi_connection)
+    dbapi_connection.enable_load_extension(False)
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA journal_mode=WAL")

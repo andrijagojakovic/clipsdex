@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.14.1",
     "rapidocr>=3.10.0",
     "scenedetect>=0.7.1",
+    "sqlite-vec>=0.1.9",
     "sqlmodel>=0.0.48",
     "torch>=2.14.1",
     "typer>=0.27.3",

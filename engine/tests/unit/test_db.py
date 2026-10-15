@@ -54,7 +54,9 @@ def test_migrate_twice_is_harmless(engine: Engine) -> None:
 def test_models_match_migrations(engine: Engine) -> None:
     """Fails when a model changes without a new Alembic migration."""
     with engine.connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(
+            connection, opts={"compare_type": True, "include_name": db.include_name}
+        )
         diff = compare_metadata(context, SQLModel.metadata)
     assert diff == []
 

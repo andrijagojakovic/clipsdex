@@ -215,3 +215,16 @@ class SettingRow(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: Any = Field(default=None, sa_type=JSON, nullable=True)
+
+
+class EmbeddingMeta(SQLModel, table=True):
+    """What each video's search vector was made from. The vectors themselves live in the
+    sqlite-vec table ``video_embeddings`` (created at run time, sized for the model)."""
+
+    __tablename__ = "embedding_meta"  # pyright: ignore[reportAssignmentType]
+
+    video_id: int = Field(foreign_key="videos.id", primary_key=True, ondelete="CASCADE")
+    model: str
+    dims: int
+    text_hash: str  # of the indexed text; a change means the vector is stale
+    created_at: datetime = Field(default_factory=utcnow)
