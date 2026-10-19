@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -15,9 +16,20 @@ from rich.table import Table
 from sqlalchemy import Engine
 from sqlmodel import Session
 
-from clipsdex_engine import __version__, analyzers, binaries, config, db, library, llm, net, search
+from clipsdex_engine import (
+    __version__,
+    analyzers,
+    binaries,
+    categories,
+    config,
+    db,
+    library,
+    llm,
+    net,
+    search,
+)
 from clipsdex_engine import profile as quick_profile
-from clipsdex_engine.db.models import JobStatus, SourceType
+from clipsdex_engine.db.models import CreatedBy, JobStatus, SourceType
 from clipsdex_engine.jobs import builtin, estimates, queue
 from clipsdex_engine.jobs import plan as planning
 from clipsdex_engine.jobs.handlers import WorkerEnv
@@ -731,6 +743,121 @@ def worker(
     )
     if report.failed:
         raise typer.Exit(code=1)
+
+
+categories_app = typer.Typer(
+    help="Add, rename, describe, merge or delete categories.", invoke_without_command=True
+)
+app.add_typer(categories_app, name="categories")
+
+
+@contextlib.contextmanager
+def _category_change() -> Iterator[Session]:
+    """A write session for category commands; user errors become a red message."""
+    engine = db.open_database(config.data_paths())
+    try:
+        with db.session_scope(engine) as session:
+            categories.ensure_default_categories(session)
+            yield session
+    except categories.CategoryError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+
+@categories_app.callback()
+def categories_list(ctx: typer.Context) -> None:
+    """List categories with their video counts and descriptions."""
+    if ctx.invoked_subcommand is not None:
+        return
+    with _category_change() as session:
+        for row in categories.counts(session):
+            c = row.category
+            mine = f", {row.by_user} by you" if row.by_user else ""
+            made = " (yours)" if c.created_by is CreatedBy.USER else ""
+            typer.echo(f"  {c.name:<16} {row.videos:>4} video(s){mine}{made}")
+            if c.description and c.description != c.name:
+                typer.echo(f"      {c.description}")
+
+
+@categories_app.command("add")
+def categories_add(
+    name: Annotated[str, typer.Argument(help="Name of the new category.")],
+    description: Annotated[
+        str | None,
+        typer.Option(help="One line about what belongs here; the models read it."),
+    ] = None,
+    color: Annotated[str | None, typer.Option(help="Color like #3a7bd5.")] = None,
+) -> None:
+    """Add a category."""
+    with _category_change() as session:
+        c = categories.create(session, name, description, color)
+        typer.echo(f'Added "{c.name}".')
+        if description is None:
+            typer.echo(
+                "Tip: add a description so the models know what belongs here:\n"
+                f'  clipsdex categories describe "{c.name}" "..."'
+            )
+
+
+@categories_app.command("rename")
+def categories_rename(
+    old: Annotated[str, typer.Argument(help="Current name.")],
+    new: Annotated[str, typer.Argument(help="New name.")],
+) -> None:
+    """Rename a category; its videos stay in it."""
+    with _category_change() as session:
+        c = categories.rename(session, old, new)
+        typer.echo(f'Renamed to "{c.name}".')
+
+
+@categories_app.command("describe")
+def categories_describe(
+    name: Annotated[str, typer.Argument(help="Category name.")],
+    description: Annotated[
+        str | None, typer.Argument(help="One line about what belongs here.")
+    ] = None,
+    color: Annotated[str | None, typer.Option(help="Color like #3a7bd5.")] = None,
+) -> None:
+    """Change what the models read about a category (and its color)."""
+    with _category_change() as session:
+        c = categories.describe(session, name, description, color)
+        typer.echo(f"{c.name}: {c.description}" + (f" ({c.color})" if c.color else ""))
+
+
+@categories_app.command("merge")
+def categories_merge(
+    source: Annotated[str, typer.Argument(help="Category to merge away.")],
+    target: Annotated[str, typer.Argument(help="Category that gets its videos.")],
+) -> None:
+    """Move every video of one category into another and delete the first."""
+    with _category_change() as session:
+        moved = categories.merge(session, source, target)
+        typer.echo(f'Merged "{source}" into "{target}" ({moved} video(s) moved).')
+
+
+@categories_app.command("delete")
+def categories_delete(name: Annotated[str, typer.Argument(help="Category name.")]) -> None:
+    """Delete a category that has no videos."""
+    with _category_change() as session:
+        categories.remove(session, name)
+        typer.echo(f'Deleted "{name}".')
+
+
+@app.command()
+def move(
+    video_ids: Annotated[list[int], typer.Argument(help="Video IDs to move.")],
+    to: Annotated[str, typer.Option("--to", help="Category to put them in.")],
+) -> None:
+    """Put videos in a category. Your choice always wins over automatic ones, and the
+    categorize step learns from it."""
+    with _category_change() as session:
+        changed = categories.move(session, video_ids, to)
+        name = categories.get(session, to).name
+    unchanged = len(set(video_ids)) - len(changed)
+    typer.echo(
+        f'Moved {len(changed)} video(s) to "{name}".'
+        + (f" {unchanged} already there." if unchanged else "")
+    )
 
 
 jobs_app = typer.Typer(help="See and cancel background jobs.", no_args_is_help=False)
