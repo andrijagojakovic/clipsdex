@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from sqlalchemy import Engine
-from sqlmodel import Session, col, select
+from sqlmodel import Session
 
 from clipsdex_engine import analyzers as registry
 from clipsdex_engine import artifacts, db, library
@@ -26,6 +26,7 @@ from clipsdex_engine.config import ModelChoice
 from clipsdex_engine.db.models import Profile, Video
 from clipsdex_engine.jobs import builtin, estimates
 from clipsdex_engine.jobs.handlers import WorkerEnv
+from clipsdex_engine.library import select_videos
 
 
 @dataclass
@@ -98,19 +99,6 @@ def artifact_resource(models: ModelChoice, name: str) -> str:
         "ocr": "rapidocr",
         "frame_descriptions": f"ollama:{models.vision}",
     }[name]
-
-
-def select_videos(
-    session: Session, category: str | None = None, video_ids: Iterable[int] | None = None
-) -> list[Video]:
-    query = select(Video).order_by(col(Video.id))
-    if video_ids is not None:
-        query = query.where(col(Video.id).in_(list(video_ids)))
-    videos = list(session.exec(query))
-    if category is None:
-        return videos
-    wanted = category.casefold()
-    return [v for v in videos if _category(session, v) == wanted]
 
 
 def _category(session: Session, video: Video) -> str | None:

@@ -644,6 +644,25 @@ def search_cmd(
             typer.echo(f"        {h.snippet}")
 
 
+@app.command()
+def serve(
+    port: Annotated[
+        int, typer.Option(min=0, max=65535, help="Port on 127.0.0.1 (0 = any free port).")
+    ] = 0,
+) -> None:
+    """Run the local API for the desktop app (127.0.0.1 only, token required)."""
+    from clipsdex_engine.api import security, server  # FastAPI loads only when needed
+
+    try:
+        server.serve(config.data_paths(), port)
+    except security.TokenError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    except OSError as e:
+        typer.secho(f"Could not start the API on 127.0.0.1:{port}: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+
+
 class ExportFormat(StrEnum):
     JSON = "json"
     CSV = "csv"
@@ -670,7 +689,7 @@ def export_cmd(
     engine = db.open_database(paths)
     today = datetime.now().date()
     with Session(engine) as session:
-        videos = planning.select_videos(session, category=category, video_ids=video)
+        videos = library.select_videos(session, category=category, video_ids=video)
         if what is ExportFormat.JSON:
             content, suffix = export.library_json(session, videos), "json"
         elif what is ExportFormat.CSV:
@@ -710,55 +729,53 @@ def brief_cmd(
 
     paths = config.data_paths()
     engine = db.open_database(paths)
-    with Session(engine) as session:
-        if video is None and category is None:
-            videos = [
-                v
-                for c in brief.Brief.default_categories
-                for v in planning.select_videos(session, category=c)
-            ]
-        else:
-            videos = planning.select_videos(session, category=category, video_ids=video)
-        sources, missing = brief.collect_sources(session, videos)
-        model = db.load_settings(session).models().text
+    today = datetime.now().date()
+    error = ""
+    try:
+        doc = brief.make_brief(
+            engine,
+            llm.default_provider,
+            category,
+            video,
+            title,
+            merge,
+            today,
+            progress=lambda m: typer.echo(f"  {m}…"),
+        )
+    except brief.NothingToBriefError as e:
+        doc = None
+        error = str(e)
+    except llm.LLMError as e:
+        typer.secho(f"Could not merge the notes: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from e
+    missing = doc.missing if doc else _brief_missing(engine, category, video)
     if missing:
         ids = " ".join(f"--video {i}" for i in missing)
         typer.secho(
             f"{len(missing)} video(s) have no notes yet. Make them first:\n"
-            f"  clipsdex plan --analyzer brief {ids} --queue\n  clipsdex worker",
+            f"  clipsdex run --analyzer brief {ids}",
             fg=typer.colors.YELLOW,
         )
-    with_advice = [s for s in sources if s.notes.get("has_advice", True)]
-    if not with_advice:
-        typer.secho("No notes with advice to put in a brief.", fg=typer.colors.RED)
+    if doc is None:
+        typer.secho(error, fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
-    merged = None
-    if merge and len(with_advice) > 1:
-        provider = llm.default_provider()
-        try:
-            provider.load(model, keep_alive="10m")
-            report = brief.merge_briefs(
-                provider, model, sources, progress=lambda m: typer.echo(f"  {m}…")
-            )
-        except llm.LLMError as e:
-            typer.secho(f"Could not merge the notes: {e}", fg=typer.colors.RED)
-            raise typer.Exit(code=1) from e
-        finally:
-            with contextlib.suppress(llm.LLMError):
-                provider.unload(model)  # only one heavy model in memory at a time
-        merged = report.brief
-
-    today = datetime.now().date()
-    name = title or f"Brief: {category or ', '.join(brief.Brief.default_categories)}"
-    text = brief.render_markdown(name, sources, merged, model, today)
     if output is None:
-        slug = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-") or "brief"
+        slug = re.sub(r"[^a-z0-9]+", "-", doc.title.casefold()).strip("-") or "brief"
         output = paths.root / "exports" / f"{slug}-{today.isoformat()}.md"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(text, encoding="utf-8")
-    themes = f", {len(merged.themes)} theme(s)" if merged else ""
-    typer.echo(f"Brief from {len(with_advice)} video(s){themes}: {output}")
+    export.write_text(output, doc.markdown)
+    themes = f", {doc.themes} theme(s)" if doc.themes else ""
+    typer.echo(f"Brief from {doc.used} video(s){themes}: {output}")
+
+
+def _brief_missing(engine: Engine, category: str | None, video: list[int] | None) -> list[int]:
+    from clipsdex_engine.analyzers import brief
+
+    with Session(engine) as session:
+        _sources, missing = brief.collect_sources(
+            session, brief.brief_videos(session, category, video)
+        )
+    return missing
 
 
 @app.command()

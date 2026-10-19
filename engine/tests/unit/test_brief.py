@@ -213,7 +213,7 @@ def test_cli_brief(
     )
     assert result.exit_code == 0, result.output
     assert "1 video(s) have no notes yet" in result.output
-    assert "clipsdex plan --analyzer brief --video 3 --queue" in result.output
+    assert "clipsdex run --analyzer brief --video 3" in result.output
     assert "Brief from 2 video(s), 1 theme(s)" in result.output
     text = out_file.read_text(encoding="utf-8")
     assert "- Sell packages. [1][2]" in text

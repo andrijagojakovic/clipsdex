@@ -12,6 +12,7 @@ built by code, so each point can be traced back to its source.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -19,9 +20,10 @@ from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import Engine
 from sqlmodel import Session
 
-from clipsdex_engine import library, llm
+from clipsdex_engine import db, library, llm
 from clipsdex_engine.analyzers.base import (
     Analyzer,
     AnalyzerContext,
@@ -347,3 +349,63 @@ def collect_sources(session: Session, videos: Sequence[Video]) -> tuple[list[Sou
             )
         )
     return sources, missing
+
+
+class NothingToBriefError(Exception):
+    """None of the chosen videos has notes with advice. Message is user-facing."""
+
+
+@dataclass
+class BriefDocument:
+    title: str
+    markdown: str
+    used: int  # videos with advice in the brief
+    themes: int  # 0 when not merged
+    missing: list[int]  # video IDs without notes yet
+
+
+def brief_videos(
+    session: Session, category: str | None, video_ids: Sequence[int] | None
+) -> list[Video]:
+    """The chosen videos; by default the categories briefs are meant for."""
+    if category is None and video_ids is None:
+        return [
+            v for c in Brief.default_categories for v in library.select_videos(session, category=c)
+        ]
+    return library.select_videos(session, category=category, video_ids=video_ids)
+
+
+def make_brief(
+    engine: Engine,
+    provider_factory: Callable[[], LLMProvider],
+    category: str | None = None,
+    video_ids: Sequence[int] | None = None,
+    title: str | None = None,
+    merge: bool = True,
+    today: date | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> BriefDocument:
+    """One Markdown brief from the notes of the chosen videos.
+
+    Merging loads the text model and unloads it afterwards, so only one heavy model is
+    in memory at a time. Raises ``NothingToBriefError`` or ``llm.LLMError``.
+    """
+    with Session(engine) as session:
+        sources, missing = collect_sources(session, brief_videos(session, category, video_ids))
+        model = db.load_settings(session).models().text
+    with_advice = [s for s in sources if s.notes.get("has_advice", True)]
+    if not with_advice:
+        raise NothingToBriefError("No notes with advice to put in a brief.")
+
+    merged = None
+    if merge and len(with_advice) > 1:
+        provider = provider_factory()
+        try:
+            provider.load(model, keep_alive="10m")
+            merged = merge_briefs(provider, model, sources, progress=progress).brief
+        finally:
+            with contextlib.suppress(llm.LLMError):
+                provider.unload(model)
+    name = title or f"Brief: {category or ', '.join(Brief.default_categories)}"
+    text = render_markdown(name, sources, merged, model, today or date.today())
+    return BriefDocument(name, text, len(with_advice), len(merged.themes) if merged else 0, missing)

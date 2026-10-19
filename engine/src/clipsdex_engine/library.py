@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePath
 
@@ -57,6 +58,26 @@ def list_videos(session: Session, filters: VideoFilter | None = None) -> list[Vi
     if filters.limit is not None:
         query = query.limit(filters.limit)
     return list(session.exec(query))
+
+
+def select_videos(
+    session: Session, category: str | None = None, video_ids: Iterable[int] | None = None
+) -> list[Video]:
+    """Videos by ID and/or current category (ignoring case), in ID order."""
+    query = select(Video).order_by(col(Video.id))
+    if video_ids is not None:
+        query = query.where(col(Video.id).in_(list(video_ids)))
+    videos = list(session.exec(query))
+    if category is None:
+        return videos
+    wanted = category.casefold()
+    picked: list[Video] = []
+    for v in videos:
+        assert v.id is not None
+        found, _by = current_category(session, v.id)
+        if found is not None and found.name.casefold() == wanted:
+            picked.append(v)
+    return picked
 
 
 def current_assignment(
