@@ -8,8 +8,11 @@ Errors come back as ``{"error": "..."}`` with a message meant for the user.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import queue as stdlib_queue
 import threading
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
@@ -18,9 +21,10 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlmodel import Session
@@ -38,6 +42,7 @@ from clipsdex_engine import (
     search,
 )
 from clipsdex_engine.analyzers import brief
+from clipsdex_engine.api import events
 from clipsdex_engine.api.security import DEFAULT_ORIGINS, GuardMiddleware
 from clipsdex_engine.config import DataPaths, Settings
 from clipsdex_engine.db.models import JobStatus, SourceType, Video
@@ -55,8 +60,9 @@ class BackgroundWorker:
     """Runs queued jobs in a thread while the API is up. If another worker already runs
     for this data folder, it waits and tries again later."""
 
-    def __init__(self, env: WorkerEnv) -> None:
+    def __init__(self, env: WorkerEnv, on_event: Callable[[str], None] | None = None) -> None:
         self.env = env
+        self.on_event = on_event
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="clipsdex-worker", daemon=True)
         self.busy_elsewhere = False
@@ -67,7 +73,7 @@ class BackgroundWorker:
     def _run(self) -> None:
         while not self.stop.is_set():
             try:
-                Worker(self.env, builtin.HANDLERS).run(
+                Worker(self.env, builtin.HANDLERS, on_event=self.on_event).run(
                     until_idle=False, should_stop=self.stop.is_set
                 )
                 self.busy_elsewhere = False
@@ -201,7 +207,8 @@ def create_app(
     engine: Engine = db.open_database(paths)
     providers = provider_factory or llm.default_provider
     env = WorkerEnv(engine, paths, provider_factory=providers)
-    worker = BackgroundWorker(env) if run_worker else None
+    hub = events.EventHub()
+    worker = BackgroundWorker(env, on_event=hub.worker_message) if run_worker else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -433,6 +440,53 @@ def create_app(
             )
         p = _build(body)
         return {"plan": _plan(p), "queued": planning.queue_plan(env, p)}
+
+    @app.get("/events")
+    async def live_events(
+        request: Request,
+        for_seconds: Annotated[float | None, Query(gt=0, le=3600)] = None,
+    ) -> StreamingResponse:
+        """Server-Sent Events with job and worker progress (see ``events.py``).
+        ``for_seconds`` closes the stream after that long; clients then reconnect."""
+        watcher = events.JobWatcher(engine)
+        inbox = hub.subscribe()
+
+        async def stream() -> AsyncIterator[str]:
+            n = 0
+            try:
+                yield "retry: 3000\n\n"
+                yield events.sse("snapshot", await run_in_threadpool(watcher.snapshot), n)
+                started = beat = time.monotonic()
+                while not await request.is_disconnected():
+                    if for_seconds is not None and time.monotonic() - started >= for_seconds:
+                        break
+                    changed = await run_in_threadpool(watcher.changes)
+                    for e in changed:
+                        n += 1
+                        yield events.sse("job", e, n)
+                    if changed:
+                        n += 1
+                        totals = await run_in_threadpool(events.counts, engine)
+                        yield events.sse("counts", totals, n)
+                    while True:
+                        try:
+                            message = inbox.get_nowait()
+                        except stdlib_queue.Empty:
+                            break
+                        n += 1
+                        yield events.sse("worker", message, n)
+                    if time.monotonic() - beat >= events.HEARTBEAT_SECONDS:
+                        beat = time.monotonic()
+                        yield ": ping\n\n"
+                    await asyncio.sleep(events.POLL_SECONDS)
+            finally:
+                hub.unsubscribe(inbox)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/jobs")
     def jobs(
