@@ -28,8 +28,15 @@ jobs:
           cache-dependency-glob: engine/uv.lock
 
       - name: Install ffmpeg (media tests generate synthetic clips with it)
+        # The Chocolatey community feed fails now and then (timeouts, rate limits): retry.
         run: |
-          choco install ffmpeg -y --no-progress
+          for ($i = 1; $i -le 3; $i++) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "choco install failed (try $i of 3), retrying in 30 s"
+            Start-Sleep -Seconds 30
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           ffmpeg -version
 
       - name: Install Python and dependencies
