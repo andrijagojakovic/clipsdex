@@ -28,16 +28,19 @@ jobs:
           cache-dependency-glob: engine/uv.lock
 
       - name: Install ffmpeg (media tests generate synthetic clips with it)
-        # The Chocolatey community feed fails now and then (timeouts, rate limits): retry.
+        # Straight from gyan.dev (the Chocolatey package broke now and then), with retries.
+        shell: pwsh
         run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
           for ($i = 1; $i -le 3; $i++) {
-            choco install ffmpeg -y --no-progress
-            if ($LASTEXITCODE -eq 0) { break }
-            Write-Host "choco install failed (try $i of 3), retrying in 30 s"
-            Start-Sleep -Seconds 30
+            try { Invoke-WebRequest $url -OutFile $zip; break }
+            catch { Write-Host "Download failed (try $i of 3): $_"; Start-Sleep -Seconds 20 }
           }
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          ffmpeg -version
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\ffmpeg"
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $exe.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & $exe.FullName -version
 
       - name: Install Python and dependencies
         run: uv sync --locked
