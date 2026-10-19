@@ -55,7 +55,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 
 - [x] **5.1** Semantic search over transcripts, summaries and tags
 - [x] **5.2** Category management: create, rename, merge, move videos
-- [ ] **5.3** Export to Markdown (Obsidian-friendly), JSON and CSV
+- [x] **5.3** Export to Markdown (Obsidian-friendly), JSON and CSV
 
 ## Phase 6 – Local API
 

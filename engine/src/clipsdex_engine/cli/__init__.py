@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -23,6 +24,7 @@ from clipsdex_engine import (
     categories,
     config,
     db,
+    export,
     library,
     llm,
     net,
@@ -640,6 +642,49 @@ def search_cmd(
         typer.echo(f"  {h.score:.2f}  #{h.video_id:<4} {h.name[:40]:<40} {h.category or '-'}")
         if h.snippet:
             typer.echo(f"        {h.snippet}")
+
+
+class ExportFormat(StrEnum):
+    JSON = "json"
+    CSV = "csv"
+    SONGS = "songs"
+    MOVIES = "movies"
+
+
+@app.command("export")
+def export_cmd(
+    what: Annotated[
+        ExportFormat,
+        typer.Argument(help="json / csv (the whole library) or songs / movies (Markdown)."),
+    ],
+    category: Annotated[str | None, typer.Option(help="Only videos in this category.")] = None,
+    video: Annotated[
+        list[int] | None, typer.Option("--video", help="Only this video ID (repeatable).")
+    ] = None,
+    output: Annotated[
+        Path | None, typer.Option(help="File to write (default: the exports folder).")
+    ] = None,
+) -> None:
+    """Export your library, so your data is never locked in. Briefs: clipsdex brief."""
+    paths = config.data_paths()
+    engine = db.open_database(paths)
+    today = datetime.now().date()
+    with Session(engine) as session:
+        videos = planning.select_videos(session, category=category, video_ids=video)
+        if what is ExportFormat.JSON:
+            content, suffix = export.library_json(session, videos), "json"
+        elif what is ExportFormat.CSV:
+            content, suffix = export.library_csv(session, videos), "csv"
+        elif what is ExportFormat.SONGS:
+            content, suffix = export.songs_markdown(session, videos, today), "md"
+        else:
+            content, suffix = export.movies_markdown(session, videos, today), "md"
+    if output is None:
+        name = {"json": "library", "csv": "library"}.get(what.value, what.value)
+        scope = f"-{re.sub(r'[^a-z0-9]+', '-', category.casefold()).strip('-')}" if category else ""
+        output = paths.root / "exports" / f"{name}{scope}-{today.isoformat()}.{suffix}"
+    export.write_text(output, content, bom=what is ExportFormat.CSV)
+    typer.echo(f"Exported {len(videos)} video(s): {output}")
 
 
 @app.command("brief")
