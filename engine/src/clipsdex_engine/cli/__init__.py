@@ -649,13 +649,16 @@ def serve(
     port: Annotated[
         int, typer.Option(min=0, max=65535, help="Port on 127.0.0.1 (0 = any free port).")
     ] = 0,
+    exit_with_stdin: Annotated[
+        bool, typer.Option(help="Stop when stdin closes (the app that started it is gone).")
+    ] = False,
 ) -> None:
     """Run the local API for the desktop app (127.0.0.1 only, token required)."""
     from clipsdex_engine.api import security, server  # FastAPI loads only when needed
 
     try:
-        server.serve(config.data_paths(), port)
-    except security.TokenError as e:
+        server.serve(config.data_paths(), port, exit_with_stdin=exit_with_stdin)
+    except security.LaunchError as e:
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(code=1) from e
     except OSError as e:

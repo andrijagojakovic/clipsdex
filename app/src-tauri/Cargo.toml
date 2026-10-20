@@ -1,0 +1,31 @@
+[package]
+name = "clipsdex"
+version = "0.0.1"
+description = "ClipsDex desktop app: analyze and organize your saved short videos, locally"
+authors = ["Andrija Gojaković"]
+license = "MIT"
+repository = "https://github.com/andrijagojakovic/clipsdex"
+edition = "2024"
+
+[lib]
+# The `_lib` suffix keeps the lib name different from the bin name (a Windows issue, see
+# https://github.com/rust-lang/cargo/issues/8519).
+name = "clipsdex_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

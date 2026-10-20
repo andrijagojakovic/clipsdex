@@ -135,7 +135,7 @@ def test_token_from_the_parent_must_be_strong(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv(security.TOKEN_ENV, raising=False)
     assert security.token_from_env() is None
     monkeypatch.setenv(security.TOKEN_ENV, "short")
-    with pytest.raises(security.TokenError, match="at least 32"):
+    with pytest.raises(security.LaunchError, match="at least 32"):
         security.token_from_env()
     monkeypatch.setenv(security.TOKEN_ENV, "x" * 40)
     assert security.token_from_env() == "x" * 40
@@ -151,13 +151,16 @@ def test_binds_to_loopback_only() -> None:
         sock.close()
 
 
-def _start_engine(paths: DataPaths, env_token: str | None) -> tuple[subprocess.Popen[str], dict]:
+def _start_engine(
+    paths: DataPaths, env_token: str | None, *args: str
+) -> tuple[subprocess.Popen[str], dict]:
     env = {**os.environ, config.DATA_DIR_ENV: str(paths.root)}
     env.pop(security.TOKEN_ENV, None)
     if env_token:
         env[security.TOKEN_ENV] = env_token
     proc = subprocess.Popen(
-        [sys.executable, "-c", "from clipsdex_engine.cli import app; app()", "serve"],
+        [sys.executable, "-c", "from clipsdex_engine.cli import app; app()", "serve", *args],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -191,6 +194,41 @@ def test_real_server_announces_itself(paths: DataPaths, env_token: str | None) -
             proc.stdout.close()
         if proc.stderr:
             proc.stderr.close()
+
+
+def test_engine_stops_when_the_app_is_gone(paths: DataPaths) -> None:
+    proc, ready = _start_engine(paths, None, "--exit-with-stdin")
+    try:
+        url = f"http://127.0.0.1:{ready['port']}/health"
+        auth = {"Authorization": f"Bearer {ready['token']}"}
+        assert httpx.get(url, headers=auth, timeout=10).status_code == 200
+        assert proc.stdin is not None
+        proc.stdin.close()  # what happens when the desktop app exits or crashes
+        assert proc.wait(timeout=20) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                stream.close()
+
+
+def test_extra_origins_must_be_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(security.EXTRA_ORIGINS_ENV, "http://localhost:1420, http://127.0.0.1:5173")
+    assert security.allowed_origins()[-2:] == ("http://localhost:1420", "http://127.0.0.1:5173")
+    for bad in ("https://evil.example.com", "http://localhost.evil.com:1420", "null"):
+        monkeypatch.setenv(security.EXTRA_ORIGINS_ENV, bad)
+        with pytest.raises(security.LaunchError, match="only list local addresses"):
+            security.allowed_origins()
+
+
+def test_dev_server_origin_can_call_the_api(paths: DataPaths, fake: FakeLLM) -> None:
+    origins = (*security.DEFAULT_ORIGINS, "http://localhost:1420")
+    app = create_app(paths, TOKEN, provider_factory=lambda: fake, run_worker=False,
+                     allowed_origins=origins)  # fmt: skip
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        r = c.get("/health", headers={**AUTH, "Origin": "http://localhost:1420"})
+    assert r.headers["access-control-allow-origin"] == "http://localhost:1420"
 
 
 # --- Functions -------------------------------------------------------------------------

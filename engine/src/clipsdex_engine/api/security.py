@@ -18,6 +18,7 @@ Tokens are never logged.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from collections.abc import Awaitable, Callable
 
@@ -37,8 +38,22 @@ DEFAULT_ORIGINS = (
 )
 
 
-class TokenError(ValueError):
-    """The token given by the parent process is unusable. Message is user-facing."""
+EXTRA_ORIGINS_ENV = "CLIPSDEX_API_EXTRA_ORIGINS"  # e.g. the dev server: http://localhost:1420
+LOOPBACK_ORIGIN = re.compile(r"https?://(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?")
+
+
+class LaunchError(ValueError):
+    """What the parent process passed in (token, origins) is unusable. Message is user-facing."""
+
+
+def allowed_origins() -> tuple[str, ...]:
+    """The app's origins, plus extra ones from the environment (development: the Vite
+    server). Extra origins must be loopback addresses; anything else is refused."""
+    extra = [o.strip() for o in os.environ.get(EXTRA_ORIGINS_ENV, "").split(",") if o.strip()]
+    for origin in extra:
+        if not LOOPBACK_ORIGIN.fullmatch(origin):
+            raise LaunchError(f"{EXTRA_ORIGINS_ENV} may only list local addresses, not {origin}.")
+    return (*DEFAULT_ORIGINS, *extra)
 
 
 def new_token() -> str:
@@ -51,7 +66,7 @@ def token_from_env() -> str | None:
     if token is None:
         return None
     if len(token) < MIN_TOKEN_LENGTH or not token.isascii() or not token.isprintable():
-        raise TokenError(
+        raise LaunchError(
             f"{TOKEN_ENV} must be at least {MIN_TOKEN_LENGTH} printable ASCII characters."
         )
     return token
