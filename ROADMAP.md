@@ -66,7 +66,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 ## Phase 7 – Desktop app (Tauri + React)
 
 - [x] **7.1** App shell that starts and stops the engine
-- [ ] **7.2** Library view with filters, categories and "how it was found" for every result
+- [x] **7.2** Library view with filters, categories and "how it was found" for every result
 - [ ] **7.3** Video playback, or a link to the original when the file was removed
 - [ ] **7.4** Actions per category / selection / video, with time estimate and progress
 - [ ] **7.5** Category editing

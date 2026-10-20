@@ -24,10 +24,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from clipsdex_engine import (
@@ -44,8 +44,9 @@ from clipsdex_engine import (
 from clipsdex_engine.analyzers import brief
 from clipsdex_engine.api import events
 from clipsdex_engine.api.security import DEFAULT_ORIGINS, GuardMiddleware
+from clipsdex_engine.artifacts import thumbnail
 from clipsdex_engine.config import DataPaths, Settings
-from clipsdex_engine.db.models import JobStatus, SourceType, Video
+from clipsdex_engine.db.models import JobStatus, Profile, Result, Source, SourceType, Video
 from clipsdex_engine.jobs import builtin, queue
 from clipsdex_engine.jobs import plan as planning
 from clipsdex_engine.jobs.handlers import WorkerEnv
@@ -146,19 +147,33 @@ class BriefBody(BaseModel):
 # --- Helpers ---------------------------------------------------------------------------
 
 
-def _video_item(session: Session, v: Video) -> dict[str, Any]:
+def _video_item(session: Session, v: Video, source_types: dict[int, str]) -> dict[str, Any]:
+    """What a library card shows; the full record is GET /videos/{id}."""
     assert v.id is not None
     found = library.current_assignment(session, v.id)
     assignment, category = found if found else (None, None)
+    profile = session.get(Profile, v.id)
+    analyzed = session.exec(
+        select(Result.analyzer)
+        .where(Result.video_id == v.id, col(Result.superseded).is_(False))
+        .distinct()
+    ).all()
     return {
         "id": v.id,
         "name": library.display_name(v),
         "author": v.author,
+        "caption": v.caption,
         "original_url": v.original_url,
+        "source": source_types.get(v.source_id),
         "saved_at": v.saved_at.isoformat() if v.saved_at else None,
+        "imported_at": v.imported_at.isoformat(),
+        "duration_s": profile.duration_s if profile else None,
+        "profiled": profile is not None,
         "category": category.name if category else None,
         "category_by": str(assignment.assigned_by) if assignment else None,
         "category_confidence": assignment.confidence if assignment else None,
+        "results": sorted(analyzed),
+        "has_file": v.file_path is not None and not v.file_deleted,
         "file_deleted": v.file_deleted,
     }
 
@@ -348,7 +363,17 @@ def create_app(
             if category is not None:
                 wanted = {v.id for v in library.select_videos(session, category=category)}
                 videos = [v for v in videos if v.id in wanted]
-            return {"videos": [_video_item(session, v) for v in videos[:limit]]}
+            sources = {src.id: str(src.type) for src in session.exec(select(Source)) if src.id}
+            return {"videos": [_video_item(session, v, sources) for v in videos[:limit]]}
+
+    @app.get("/videos/{video_id}/thumbnail")
+    def video_thumbnail(video_id: int) -> FileResponse:
+        path = thumbnail.thumbnail(engine, paths, video_id)
+        if path is None:
+            raise HTTPException(404, f"Video #{video_id} has no picture to show.")
+        # The picture never changes for a video; the app may keep it.
+        return FileResponse(path, media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=86400"})  # fmt: skip
 
     @app.get("/videos/{video_id}")
     def get_video(video_id: int) -> dict[str, Any]:

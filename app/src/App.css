@@ -1,100 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", Inter, system-ui, sans-serif;
+}
+
 :root {
-  font-family: "Segoe UI", Inter, system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
-  color: #1d1d1f;
-  background: #f6f6f7;
   color-scheme: light dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #ececf0;
-    background: #18181b;
-  }
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
 }
 
 body {
-  margin: 0;
-}
-
-.app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.6rem;
-}
-
-h2 {
-  font-size: 1.1rem;
-}
-
-.muted {
-  opacity: 0.65;
-}
-
-.badge {
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 0.85rem;
-  background: #e4e4e7;
-}
-
-.badge.ready {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.badge.failed {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.problem {
-  border-left: 4px solid #dc2626;
-  padding: 8px 16px;
-}
-
-.problem pre {
-  white-space: pre-wrap;
-  font-size: 0.8rem;
-  max-height: 240px;
-  overflow: auto;
-}
-
-.categories {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-}
-
-.categories li {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(127, 127, 127, 0.12);
-}
-
-button {
-  font: inherit;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(127, 127, 127, 0.4);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
+  @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-900 dark:text-zinc-100;
 }
