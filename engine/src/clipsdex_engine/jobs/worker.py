@@ -102,7 +102,10 @@ class Worker:
             if not ready:
                 if until_idle:
                     return
-                time.sleep(self.poll_interval)
+                # Small steps, so a stop request (e.g. the API shutting down) is quick.
+                end = time.monotonic() + self.poll_interval
+                while time.monotonic() < end and not should_stop():
+                    time.sleep(0.05)
                 continue
             keys = [key for key, _count, _oldest in ready]
             key = self.current.key if self.current and self.current.key in keys else keys[0]

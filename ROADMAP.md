@@ -61,7 +61,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 
 - [x] **6.1** HTTP API for the desktop app (localhost only, random port, token)
 - [x] **6.2** Live job progress (Server-Sent Events)
-- [ ] **6.3** API tests
+- [x] **6.3** API tests
 
 ## Phase 7 – Desktop app (Tauri + React)
 
