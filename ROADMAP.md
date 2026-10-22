@@ -67,7 +67,7 @@ Step numbers (e.g. 3.2) are referenced in commit messages.
 
 - [x] **7.1** App shell that starts and stops the engine
 - [x] **7.2** Library view with filters, categories and "how it was found" for every result
-- [ ] **7.3** Video playback, or a link to the original when the file was removed
+- [x] **7.3** Video playback, or a link to the original when the file was removed
 - [ ] **7.4** Actions per category / selection / video, with time estimate and progress
 - [ ] **7.5** Category editing
 - [ ] **7.6** Settings: presets, frame budget, storage, optional API keys

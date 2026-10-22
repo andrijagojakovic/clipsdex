@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ResultRecord, VideoRecord } from "../api";
+import type { Connection, ResultRecord, VideoRecord } from "../api";
+import { Player } from "./Player";
 import { analyzerTitle, duration, percent, resultLists, resultSummary } from "../format";
 
 // Results that are only shown inside another section.
@@ -77,7 +78,15 @@ function Fold({ text, limit = 400 }: { text: string; limit?: number }) {
   );
 }
 
-export function VideoDetail({ video, onClose }: { video: VideoRecord; onClose: () => void }) {
+export function VideoDetail({
+  video,
+  onClose,
+  conn = null,
+}: {
+  video: VideoRecord;
+  onClose: () => void;
+  conn?: Connection | null;
+}) {
   const p = video.profile;
   const results = Object.entries(video.results).filter(([name]) => !SHOWN_ELSEWHERE.has(name));
   // The reason comes from whichever result set the current category: the full
@@ -106,6 +115,8 @@ export function VideoDetail({ video, onClose }: { video: VideoRecord; onClose: (
         </button>
       </div>
 
+      {conn && <Player conn={conn} video={video} />}
+
       {video.original_url && (
         <button
           type="button"
@@ -114,9 +125,6 @@ export function VideoDetail({ video, onClose }: { video: VideoRecord; onClose: (
         >
           Open the original post
         </button>
-      )}
-      {video.file_deleted && (
-        <p className="text-sm text-zinc-500">The video file was removed; the results and the link are kept.</p>
       )}
 
       <Section title="Category">

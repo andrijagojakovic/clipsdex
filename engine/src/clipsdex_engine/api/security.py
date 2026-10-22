@@ -12,14 +12,22 @@ The API can read the user's video files and library, so only the desktop app may
 - Browsers may only call it from the desktop app's own origins (CORS); preflight
   requests carry no token and are answered by the CORS layer alone.
 
+The one exception to the token rule is video playback: a ``<video>`` element can't send
+an Authorization header. The app asks (with the token) for a link to one video; the link
+is signed with a key that exists only in this engine process, names that one video and
+expires after two hours. ``/media/<id>`` accepts such a link instead of the token.
+
 Tokens are never logged.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import re
 import secrets
+import time
 from collections.abc import Awaitable, Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -79,12 +87,39 @@ def host_name(host_header: str) -> str:
     return host_header.rsplit(":", 1)[0] if ":" in host_header else host_header
 
 
+MEDIA_PATH = re.compile(r"/media/\d+")
+MEDIA_LINK_SECONDS = 2 * 3600
+
+
+class MediaLinks:
+    """Signed, expiring links to one video file, for the app's player."""
+
+    def __init__(self, key: bytes | None = None, clock: Callable[[], float] = time.time) -> None:
+        self._key = key or secrets.token_bytes(32)  # new for every engine start
+        self._clock = clock
+
+    def _signature(self, video_id: int, expires: int) -> str:
+        message = f"{video_id}:{expires}".encode()
+        return hmac.new(self._key, message, hashlib.sha256).hexdigest()
+
+    def link(self, video_id: int, seconds: int = MEDIA_LINK_SECONDS) -> str:
+        expires = int(self._clock()) + seconds
+        return f"/media/{video_id}?exp={expires}&sig={self._signature(video_id, expires)}"
+
+    def valid(self, video_id: int, expires: int, signature: str) -> bool:
+        if expires < self._clock() or not signature.isascii():
+            return False
+        return hmac.compare_digest(signature, self._signature(video_id, expires))
+
+
 def _deny(status: int, message: str) -> Response:
     return JSONResponse({"error": message}, status_code=status)
 
 
 class GuardMiddleware(BaseHTTPMiddleware):
-    """Rejects requests with a non-loopback Host or without the right bearer token."""
+    """Rejects requests with a non-loopback Host or without the right bearer token.
+    Video reads (GET/HEAD ``/media/<id>``) skip the token; that route checks its signed
+    link instead."""
 
     def __init__(self, app: ASGIApp, token: str) -> None:
         super().__init__(app)
@@ -95,6 +130,8 @@ class GuardMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         if host_name(request.headers.get("host", "")).lower() not in LOOPBACK_HOSTS:
             return _deny(400, "This API only answers on the local machine.")
+        if request.method in ("GET", "HEAD") and MEDIA_PATH.fullmatch(request.url.path):
+            return await call_next(request)
         given = request.headers.get("authorization", "").encode()
         if not secrets.compare_digest(given, self._expected):
             return _deny(401, "Missing or wrong token.")

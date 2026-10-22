@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import queue as stdlib_queue
 import threading
 import time
@@ -43,7 +44,12 @@ from clipsdex_engine import (
 )
 from clipsdex_engine.analyzers import brief
 from clipsdex_engine.api import events
-from clipsdex_engine.api.security import DEFAULT_ORIGINS, GuardMiddleware
+from clipsdex_engine.api.security import (
+    DEFAULT_ORIGINS,
+    MEDIA_LINK_SECONDS,
+    GuardMiddleware,
+    MediaLinks,
+)
 from clipsdex_engine.artifacts import thumbnail
 from clipsdex_engine.config import DataPaths, Settings
 from clipsdex_engine.db.models import JobStatus, Profile, Result, Source, SourceType, Video
@@ -244,6 +250,7 @@ def create_app(
     # Order matters: the guard runs inside CORS, so preflight requests (which carry no
     # token) are answered by CORS, and every real request still needs the token.
     app.add_middleware(GuardMiddleware, token=token)
+    media_links = MediaLinks()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(allowed_origins),
@@ -365,6 +372,33 @@ def create_app(
                 videos = [v for v in videos if v.id in wanted]
             sources = {src.id: str(src.type) for src in session.exec(select(Source)) if src.id}
             return {"videos": [_video_item(session, v, sources) for v in videos[:limit]]}
+
+    def _video_file(video_id: int) -> Path:
+        with reading() as session:
+            video = session.get(Video, video_id)
+            if video is None:
+                raise HTTPException(404, f"There is no video #{video_id}.")
+            if not video.file_path or video.file_deleted:
+                raise HTTPException(404, "The video file was removed; only the link is kept.")
+            path = Path(video.file_path)
+        if not path.is_file():
+            raise HTTPException(404, f"The video file is no longer at {path}.")
+        return path
+
+    @app.get("/videos/{video_id}/play")
+    def play_link(video_id: int) -> dict[str, Any]:
+        """A link the player can use without the token (see ``security.MediaLinks``)."""
+        _video_file(video_id)
+        return {"url": media_links.link(video_id), "expires_in": MEDIA_LINK_SECONDS}
+
+    @app.get("/media/{video_id}")
+    def media(video_id: int, exp: int = 0, sig: str = "") -> FileResponse:
+        if not media_links.valid(video_id, exp, sig):
+            raise HTTPException(403, "This video link is not valid or has expired.")
+        path = _video_file(video_id)
+        kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        # Range requests are answered by FileResponse, so the player can seek.
+        return FileResponse(path, media_type=kind, headers={"Cache-Control": "private"})
 
     @app.get("/videos/{video_id}/thumbnail")
     def video_thumbnail(video_id: int) -> FileResponse:

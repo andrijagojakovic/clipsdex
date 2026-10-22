@@ -99,7 +99,7 @@ export default function App() {
               {detail.error ? (
                 <p className="p-4 text-sm text-red-600">{detail.error}</p>
               ) : detail.video ? (
-                <VideoDetail video={detail.video} onClose={() => setSelectedId(null)} />
+                <VideoDetail video={detail.video} conn={conn} onClose={() => setSelectedId(null)} />
               ) : (
                 <p className="p-4 text-sm text-zinc-500">Loading…</p>
               )}
