@@ -271,6 +271,13 @@ def test_categories_and_moves(client: TestClient) -> None:
     assert client.delete("/categories/edit", headers=AUTH).status_code == 400
 
 
+def test_analyzers_say_what_can_run(client: TestClient) -> None:
+    found = {a["name"]: a for a in client.get("/analyzers", headers=AUTH).json()["analyzers"]}
+    assert found["categorize"]["available"] is True and found["categorize"]["title"] == "Categorize"
+    assert found["song_id"]["available"] is False
+    assert found["brief"]["default_categories"] == ["business", "education"]
+
+
 def test_plan_run_and_jobs(client: TestClient) -> None:
     body = {"analyzers": ["categorize"], "video_ids": [1]}
     plan = client.post("/plan", headers=AUTH, json=body).json()

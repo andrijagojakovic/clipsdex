@@ -12,7 +12,6 @@ import {
   type VideoItem,
   type VideoRecord,
 } from "./api";
-import { followEvents } from "./sse";
 
 export function useEngine(): EngineStatus {
   const [status, setStatus] = useState<EngineStatus>({ state: "starting" });
@@ -40,8 +39,8 @@ export interface Library {
   reload: () => void;
 }
 
-/** Videos and categories; reloads itself when a job finishes (live events). */
-export function useLibrary(conn: Connection | null): Library {
+/** Videos and categories; reloads when `changed` changes (a job finished). */
+export function useLibrary(conn: Connection | null, changed = 0): Library {
   const [state, setState] = useState<Omit<Library, "reload">>({
     health: null,
     videos: [],
@@ -79,30 +78,7 @@ export function useLibrary(conn: Connection | null): Library {
     return () => {
       cancelled = true;
     };
-  }, [conn?.url, conn?.token, version]);
-
-  // A finished job can change categories or results: reload, at most once a second.
-  const pending = useRef<number | null>(null);
-  useEffect(() => {
-    if (conn === null) return;
-    const stop = new AbortController();
-    followEvents(
-      conn,
-      (e) => {
-        const status = (e.data as { status?: string } | null)?.status;
-        if (e.event === "job" && status !== "queued" && status !== "running") {
-          if (pending.current === null) {
-            pending.current = window.setTimeout(() => {
-              pending.current = null;
-              reload();
-            }, 1000);
-          }
-        }
-      },
-      stop.signal,
-    );
-    return () => stop.abort();
-  }, [conn?.url, conn?.token, reload]);
+  }, [conn?.url, conn?.token, version, changed]);
 
   return { ...state, reload };
 }

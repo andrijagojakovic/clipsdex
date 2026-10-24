@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { Connection, ResultRecord, VideoRecord } from "../api";
+import type { AnalyzerInfo, Connection, ResultRecord, VideoRecord } from "../api";
+import { AnalyzeMenu } from "./AnalyzeMenu";
 import { Player } from "./Player";
 import { analyzerTitle, duration, percent, resultLists, resultSummary } from "../format";
 
@@ -82,10 +83,14 @@ export function VideoDetail({
   video,
   onClose,
   conn = null,
+  analyzers = [],
+  onAnalyze,
 }: {
   video: VideoRecord;
   onClose: () => void;
   conn?: Connection | null;
+  analyzers?: AnalyzerInfo[];
+  onAnalyze?: (analyzer: string) => void;
 }) {
   const p = video.profile;
   const results = Object.entries(video.results).filter(([name]) => !SHOWN_ELSEWHERE.has(name));
@@ -116,6 +121,12 @@ export function VideoDetail({
       </div>
 
       {conn && <Player conn={conn} video={video} />}
+
+      {onAnalyze && analyzers.length > 0 && (
+        <div className="self-start">
+          <AnalyzeMenu analyzers={analyzers} onPick={onAnalyze} label="Analyze this video" align="left" />
+        </div>
+      )}
 
       {video.original_url && (
         <button

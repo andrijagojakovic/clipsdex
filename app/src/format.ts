@@ -85,3 +85,26 @@ export function matchesText(
   if (!q) return true;
   return [video.name, video.author, video.caption].some((v) => v?.toLowerCase().includes(q));
 }
+
+/** "~3 min", like the engine's estimates. */
+export function humanize(seconds: number): string {
+  if (seconds < 60) return `~${Math.max(1, Math.round(seconds))} s`;
+  if (seconds < 3600) return `~${Math.round(seconds / 60)} min`;
+  const minutes = Math.round(seconds / 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `~${h} h ${m} min` : `~${h} h`;
+}
+
+/** What a job is doing, in words. */
+export function jobTitle(name: string): string {
+  const titles: Record<string, string> = {
+    profile: "Quick profile",
+    category_guess: "First category guess",
+    transcript: "Transcribing speech",
+    frames: "Picking key frames",
+    ocr: "Reading on-screen text",
+    frame_descriptions: "Describing frames",
+  };
+  return titles[name] ?? analyzerTitle(name);
+}

@@ -485,6 +485,22 @@ def create_app(
             engine, body.analyzers, body.artifacts, body.category, body.video_ids, body.redo
         )
 
+    @app.get("/analyzers")
+    def list_analyzers() -> dict[str, Any]:
+        """What the user can ask for, and whether this version can do it yet."""
+        return {
+            "analyzers": [
+                {
+                    "name": a.name,
+                    "title": a.title,
+                    "available": a.available,
+                    "default_categories": list(a.default_categories),
+                    "requires": list(a.requires),
+                }
+                for a in analyzers.REGISTRY.values()
+            ]
+        }
+
     @app.post("/plan")
     def plan(body: PlanBody) -> dict[str, Any]:
         return _plan(_build(body))

@@ -149,3 +149,46 @@ export interface VideoRecord {
   on_screen_text: string | null;
   scenes: string[];
 }
+
+export interface AnalyzerInfo {
+  name: string;
+  title: string;
+  available: boolean;
+  default_categories: string[];
+  requires: string[];
+}
+
+export interface PlanRequest {
+  analyzers: string[];
+  category?: string | null;
+  video_ids?: number[] | null;
+  redo?: boolean;
+}
+
+export interface PlanVideo {
+  video_id: number;
+  name: string;
+  analyzers: string[];
+  skipped: Record<string, string>;
+  done: string[];
+  missing: string[];
+  blocked: string | null;
+}
+
+export interface PlanJob {
+  name: string;
+  videos: number;
+  seconds: number;
+  measured_jobs: number;
+  resource: string;
+}
+
+export interface Plan {
+  analyzers: string[];
+  artifacts: string[];
+  videos: PlanVideo[];
+  jobs: PlanJob[];
+  load_seconds: number;
+  total_seconds: number;
+  not_available: string[];
+}
